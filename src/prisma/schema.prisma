@@ -1,0 +1,62 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model User {
+  id             Int           @id @default(autoincrement())
+  userId         String        @unique
+  username       String
+  btcBalance     Float         @default(0)
+  ltcBalance     Float         @default(0)
+  usdtBalance    Float         @default(0)
+  btcAddress     String        @unique
+  ltcAddress     String        @unique
+  usdtAddress    String        @unique
+  btcPrivateKey  String
+  ltcPrivateKey  String
+  usdtPrivateKey String
+  createdAt      DateTime      @default(now())
+  orders         Order[]       @relation("WarrantHolderOrders")
+  boughtOrders   Order[]       @relation("UserOrders")
+  transactions   Transaction[]
+
+  @@map("users")
+}
+
+model Order {
+  id             Int      @id @default(autoincrement())
+  userId         String
+  type           String
+  coin           String
+  amount         Float
+  fiatAmount     Float
+  markupPercent  Float
+  minerFee       Float
+  status         String   @default("open")
+  buyerId        String?
+  buyerConfirmed Boolean  @default(false)
+  createdAt      DateTime @default(now())
+  warrantHolder  User     @relation("WarrantHolderOrders", fields: [userId], references: [userId])
+  user           User?    @relation("UserOrders", fields: [buyerId], references: [userId])
+
+  @@map("orders")
+}
+
+model Transaction {
+  id        Int      @id @default(autoincrement())
+  userId    String
+  coin      String
+  txId      String   @unique
+  amount    Float
+  type      String
+  status    String
+  createdAt DateTime @default(now())
+  user      User     @relation(fields: [userId], references: [userId])
+
+  @@map("transactions")
+}
