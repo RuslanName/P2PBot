@@ -1,5 +1,5 @@
 import { getCryptoPrice } from './api';
-import { Order } from '@prisma/client';
+import { Offer } from '@prisma/client';
 import * as dotenv from "dotenv";
 import { getFeeRate } from './wallet';
 
@@ -15,21 +15,23 @@ const DEFAULT_FEE_RATE = 50;
 export async function calculateUserTransaction(
     type: 'buy' | 'sell',
     amount: number,
-    order: Order
+    offer: Offer,
 ): Promise<{ totalAmount: number; currency: string }> {
     let feeRate = DEFAULT_FEE_RATE;
-    try {
-        feeRate = await getFeeRate(order.coin, MINER_FEE_LEVEL);
-    } catch (error) {
-        console.error('Error getting fee rate, using default:', error);
+    if (offer.coin !== 'XMR') {
+        try {
+            feeRate = await getFeeRate(offer.coin, MINER_FEE_LEVEL);
+        } catch (error) {
+            console.error('Error getting fee rate, using default:', error);
+        }
     }
 
-    const minerFee = feeRate * TX_WEIGHT / 1e8;
+    const minerFee = offer.coin === 'XMR' ? 0.0001 : feeRate * TX_WEIGHT / 1e8;
 
     if (type === 'buy') {
         try {
-            const totalAmount = amount * (1 + order.markupPercent / 100);
-            const rubAmount = await getCryptoPrice(order.coin, totalAmount);
+            const totalAmount = amount * (1 + offer.markupPercent / 100);
+            const rubAmount = await getCryptoPrice(offer.coin, totalAmount);
             return {
                 totalAmount: rubAmount,
                 currency: 'RUB'
@@ -42,21 +44,21 @@ export async function calculateUserTransaction(
             };
         }
     } else {
-        const totalAmount = amount * (1 + order.markupPercent / 100) + minerFee;
+        const totalAmount = amount * (1 + offer.markupPercent / 100) + minerFee;
         return {
             totalAmount: parseFloat(totalAmount.toFixed(8)),
-            currency: order.coin
+            currency: offer.coin
         };
     }
 }
 
 export async function calculateOrderTransaction(
     type: 'buy' | 'sell',
-    order: Order
+    offer: Offer
 ): Promise<{ totalAmount: number; currency: string }> {
     let feeRate = DEFAULT_FEE_RATE;
     try {
-        feeRate = await getFeeRate(order.coin, MINER_FEE_LEVEL);
+        feeRate = await getFeeRate(offer.coin, MINER_FEE_LEVEL);
     } catch (error) {
         console.error('Error getting fee rate, using default:', error);
     }
@@ -66,18 +68,18 @@ export async function calculateOrderTransaction(
         ? PLATFORM_BUY_FEE_PERCENT / 100
         : PLATFORM_SELL_FEE_PERCENT / 100;
 
-    const platformFee = order.amount * platformFeePercent;
+    const platformFee = offer.amount * platformFeePercent;
 
     if (type === 'buy') {
-        const totalAmount = order.amount + platformFee + minerFee;
+        const totalAmount = offer.amount + platformFee + minerFee;
         return {
             totalAmount: parseFloat(totalAmount.toFixed(8)),
-            currency: order.coin
+            currency: offer.coin
         };
     } else {
         try {
-            const totalAmount = order.amount + platformFee;
-            const rubAmount = await getCryptoPrice(order.coin, totalAmount);
+            const totalAmount = offer.amount + platformFee;
+            const rubAmount = await getCryptoPrice(offer.coin, totalAmount);
             return {
                 totalAmount: rubAmount,
                 currency: 'RUB'

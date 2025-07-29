@@ -13,7 +13,7 @@ export async function getBlockCypherFees(coin: string) {
 }
 
 export async function getCryptoPrice(coin: string, amount: number): Promise<number> {
-    const id = coin === 'BTC' ? 'bitcoin' : coin === 'LTC' ? 'litecoin' : 'tether';
+    const id = coin === 'BTC' ? 'bitcoin' : coin === 'LTC' ? 'litecoin' : coin === 'USDT' ? 'tether' : 'monero';
     const response = await axios.get(`https://api.coingecko.com/api/v3/simple/price?ids=${id}&vs_currencies=rub`);
     const price = response.data[id].rub;
     return amount * price;

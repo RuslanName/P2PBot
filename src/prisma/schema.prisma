@@ -8,55 +8,84 @@ datasource db {
 }
 
 model User {
-  id             Int           @id @default(autoincrement())
-  userId         String        @unique
-  username       String
-  btcBalance     Float         @default(0)
-  ltcBalance     Float         @default(0)
-  usdtBalance    Float         @default(0)
-  btcAddress     String        @unique
-  ltcAddress     String        @unique
-  usdtAddress    String        @unique
-  btcPrivateKey  String
-  ltcPrivateKey  String
-  usdtPrivateKey String
-  createdAt      DateTime      @default(now())
-  orders         Order[]       @relation("WarrantHolderOrders")
-  boughtOrders   Order[]       @relation("UserOrders")
-  transactions   Transaction[]
+  id           Int           @id @default(autoincrement())
+  chatId       String        @unique
+  username     String
+  firstName    String
+  lastName     String
+  wallets      Wallet[]      @relation()
+  deals        Deal[]        @relation("ClientDeals")
+  transactions Transaction[] @relation()
+  offers       Offer[]       @relation()
+  createdAt    DateTime      @default(now())
 
   @@map("users")
 }
 
-model Order {
-  id             Int      @id @default(autoincrement())
-  userId         String
-  type           String
-  coin           String
-  amount         Float
-  fiatAmount     Float
-  markupPercent  Float
-  minerFee       Float
-  status         String   @default("open")
-  buyerId        String?
-  buyerConfirmed Boolean  @default(false)
-  createdAt      DateTime @default(now())
-  warrantHolder  User     @relation("WarrantHolderOrders", fields: [userId], references: [userId])
-  user           User?    @relation("UserOrders", fields: [buyerId], references: [userId])
+model Wallet {
+  id                 Int       @id @default(autoincrement())
+  user               User      @relation(fields: [userId], references: [id])
+  userId             Int
+  coin               String
+  balance            Float     @default(0)
+  address            String    @unique
+  privateKey         String
+  unconfirmedBalance Float?    @default(0)
+  lastBalanceUpdate  DateTime?
+  walletPath         String?
+  createdAt          DateTime  @default(now())
 
-  @@map("orders")
+  @@map("wallets")
 }
 
 model Transaction {
   id        Int      @id @default(autoincrement())
-  userId    String
-  coin      String
-  txId      String   @unique
-  amount    Float
   type      String
+  coin      String
+  amount    Float
+  txId      String   @unique
   status    String
+  user      User     @relation(fields: [userId], references: [id])
+  userId    Int
+  deals     Deal[]   @relation()
   createdAt DateTime @default(now())
-  user      User     @relation(fields: [userId], references: [userId])
 
   @@map("transactions")
+}
+
+model Offer {
+  id            Int      @id @default(autoincrement())
+  type          String
+  coin          String
+  amount        Float
+  minDealAmount Float
+  maxDealAmount Float
+  markupPercent Float
+  warrantHolder User     @relation(fields: [userId], references: [id])
+  userId        Int
+  deals         Deal[]   @relation()
+  createdAt     DateTime @default(now())
+
+  @@map("offers")
+}
+
+model Deal {
+  id               Int         @id @default(autoincrement())
+  client           User        @relation("ClientDeals", fields: [userId], references: [id])
+  userId           Int
+  offer            Offer       @relation(fields: [offerId], references: [id])
+  offerId          Int
+  transaction      Transaction @relation(fields: [transactionId], references: [id])
+  transactionId    Int
+  amount           Float
+  fiatAmount       Float
+  clientFee        Float
+  warrantHolderFee Float
+  minerFee         Float
+  platformFee      Float
+  status           String      @default("open")
+  clientConfirmed  Boolean     @default(false)
+  createdAt        DateTime    @default(now())
+
+  @@map("deals")
 }

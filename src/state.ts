@@ -2,7 +2,7 @@ const stateStore: { [key: string]: any } = {};
 
 export interface BotState {
     coin?: string;
-    orderId?: number;
+    offerId?: number;
     action?: string;
     amount?: number;
     platformFee?: number;

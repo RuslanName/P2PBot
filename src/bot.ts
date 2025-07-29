@@ -6,13 +6,15 @@ import {
     generateUSDTWallet,
     checkDeposits,
     withdrawToExternalWallet,
-    sendP2PTransaction
+    sendP2PTransaction,
+    getWalletBalance,
+    // generateXMRWallet
 } from './wallet';
 import { getBlockCypherFees, getCryptoPrice } from './api';
 import { encrypt } from './crypto';
 import * as dotenv from 'dotenv';
 import { getState, setState, clearState, BotState } from './state';
-import {calculateOrderTransaction, calculateUserTransaction, calculateWithdrawal} from "./utils";
+import { calculateUserTransaction, calculateWithdrawal } from './utils';
 
 dotenv.config();
 
@@ -42,23 +44,30 @@ bot.start(async (ctx) => {
     if (!ctx.from?.id) return;
     const userId = ctx.from.id.toString();
     const username = ctx.from.username || ctx.from.first_name || 'User';
+    const firstName = ctx.from.first_name || 'User';
+    const lastName = ctx.from.last_name || '';
 
-    const existingUser = await prisma.user.findUnique({ where: { userId } });
+    const existingUser = await prisma.user.findUnique({ where: { chatId: userId } });
     if (!existingUser) {
         const btcWallet = generateBTCWallet();
         const ltcWallet = generateLTCWallet();
-        const usdtWallet = generateUSDTWallet();
+        const usdtWallet = await generateUSDTWallet();
+        // const xmrWallet = await generateXMRWallet();
 
         await prisma.user.create({
             data: {
-                userId,
+                chatId: userId,
                 username,
-                btcAddress: btcWallet.address,
-                ltcAddress: ltcWallet.address,
-                usdtAddress: usdtWallet.address,
-                btcPrivateKey: encrypt(btcWallet.privateKey),
-                ltcPrivateKey: encrypt(ltcWallet.privateKey),
-                usdtPrivateKey: encrypt(usdtWallet.privateKey),
+                firstName,
+                lastName,
+                wallets: {
+                    create: [
+                        { coin: 'BTC', address: btcWallet.address, privateKey: encrypt(btcWallet.privateKey), balance: 0, unconfirmedBalance: 0 },
+                        { coin: 'LTC', address: ltcWallet.address, privateKey: encrypt(ltcWallet.privateKey), balance: 0, unconfirmedBalance: 0 },
+                        { coin: 'USDT', address: usdtWallet.address, privateKey: encrypt(usdtWallet.privateKey), balance: 0, unconfirmedBalance: 0 },
+                        // { coin: 'XMR', address: xmrWallet.address, privateKey: encrypt(xmrWallet.privateKey), balance: 0, unconfirmedBalance: 0 },
+                    ]
+                }
             },
         });
     }
@@ -78,47 +87,99 @@ bot.hears('Сделки', async (ctx) => {
 bot.hears('Кошельки', async (ctx) => {
     if (!ctx.from?.id) return;
     const userId = ctx.from.id.toString();
-    const user = await prisma.user.findUnique({ where: { userId } });
+    const user = await prisma.user.findUnique({
+        where: { chatId: userId },
+        include: { wallets: true }
+    });
     if (!user) return;
 
-    const btcDeposits = await checkDeposits(user.btcAddress, 'BTC', userId);
-    const ltcDeposits = await checkDeposits(user.ltcAddress, 'LTC', userId);
-    const usdtDeposits = await checkDeposits(user.usdtAddress, 'USDT', userId);
+    for (const wallet of user.wallets) {
+        const { confirmed, unconfirmed } = await getWalletBalance(wallet.address, wallet.coin, userId);
+        await prisma.wallet.update({
+            where: { id: wallet.id },
+            data: { balance: confirmed, unconfirmedBalance: unconfirmed }
+        });
+    }
 
-    const updatedUser = await prisma.user.update({
-        where: { userId },
-        data: {
-            btcBalance: btcDeposits.reduce((sum, tx) => sum + tx.amount, user.btcBalance),
-            ltcBalance: ltcDeposits.reduce((sum, tx) => sum + tx.amount, user.ltcBalance),
-            usdtBalance: usdtDeposits.reduce((sum, tx) => sum + tx.amount, user.usdtBalance),
-        },
+    const updatedUser = await prisma.user.findUnique({
+        where: { chatId: userId },
+        include: { wallets: true }
     });
 
-    await ctx.reply(
-        `BTC - кошелёк\nАдрес: ${updatedUser.btcAddress}\nБаланс: ${updatedUser.btcBalance} BTC\n\n` +
-        `LTC - кошелёк\nАдрес: ${updatedUser.ltcAddress}\nБаланс: ${updatedUser.ltcBalance} LTC\n\n` +
-        `USDT - кошелёк\nАдрес: ${updatedUser.usdtAddress}\nБаланс: ${updatedUser.usdtBalance} USDT`
-    );
+    if (!updatedUser) return;
+
+    const walletInfo = await Promise.all(updatedUser.wallets.map(async (wallet) => {
+        const pendingTransactions = await prisma.transaction.findMany({
+            where: {
+                userId: updatedUser.id,
+                coin: wallet.coin,
+                status: 'pending',
+                type: 'buy'
+            },
+            select: { amount: true }
+        });
+        const heldAmount = pendingTransactions.reduce((sum, tx) => sum + tx.amount, 0);
+
+        const pendingAmount = wallet.unconfirmedBalance || 0;
+
+        let balanceText = `${wallet.coin} - кошелёк\nАдрес: ${wallet.address}\nБаланс: ${wallet.balance} ${wallet.coin}`;
+
+        const statusParts = [];
+        if (pendingAmount > 0) {
+            statusParts.push(`на обработке: ${pendingAmount}`);
+        }
+        if (heldAmount > 0) {
+            statusParts.push(`на удержании: ${heldAmount}`);
+        }
+        if (statusParts.length > 0) {
+            balanceText += ` (${statusParts.join(', ')})`;
+        }
+
+        return balanceText;
+    }));
+
+    await ctx.reply(walletInfo.join('\n\n'));
 });
 
 bot.hears('Переводы', async (ctx) => {
     if (!ctx.from?.id) return;
     await ctx.reply('С какого кошелька хотите вывести?', Markup.inlineKeyboard([
-        [Markup.button.callback('BTC', 'withdraw_BTC'), Markup.button.callback('LTC', 'withdraw_LTC'), Markup.button.callback('USDT', 'withdraw_USDT')],
+        [
+            Markup.button.callback('BTC', 'withdraw_BTC'),
+            Markup.button.callback('LTC', 'withdraw_LTC')
+        ],
+        [
+            Markup.button.callback('USDT', 'withdraw_USDT'),
+            Markup.button.callback('XMR', 'withdraw_XMR')
+        ],
         [Markup.button.callback('Отменить', 'cancel')],
     ]));
 });
 
 bot.action('buy', async (ctx) => {
     await ctx.editMessageText('Какую валюту хотите купить?', Markup.inlineKeyboard([
-        [Markup.button.callback('BTC', 'buy_BTC'), Markup.button.callback('LTC', 'buy_LTC'), Markup.button.callback('USDT', 'buy_USDT')],
+        [
+            Markup.button.callback('BTC', 'withdraw_BTC'),
+            Markup.button.callback('LTC', 'withdraw_LTC')
+        ],
+        [
+            Markup.button.callback('USDT', 'withdraw_USDT'),
+            Markup.button.callback('XMR', 'withdraw_XMR')
+        ],
         [Markup.button.callback('Отменить', 'cancel')],
     ]));
 });
 
 bot.action('sell', async (ctx) => {
     await ctx.editMessageText('Какую валюту хотите продать?', Markup.inlineKeyboard([
-        [Markup.button.callback('BTC', 'sell_BTC'), Markup.button.callback('LTC', 'sell_LTC'), Markup.button.callback('USDT', 'sell_USDT')],
+        [
+            Markup.button.callback('BTC', 'withdraw_BTC'),
+            Markup.button.callback('LTC', 'withdraw_LTC')
+        ],
+        [
+            Markup.button.callback('USDT', 'withdraw_USDT'),
+            Markup.button.callback('XMR', 'withdraw_XMR')
+        ],
         [Markup.button.callback('Отменить', 'cancel')],
     ]));
 });
@@ -132,30 +193,30 @@ bot.action(/buy_(BTC|LTC|USDT)/, async (ctx) => {
 
     const pageSize = 5;
     const skip = 0;
-    const orders = await prisma.order.findMany({
-        where: { coin, status: 'open', type: 'sell' },
+    const offers = await prisma.offer.findMany({
+        where: { coin, type: 'sell' },
         take: pageSize,
         skip,
     });
 
-    const totalOrders = await prisma.order.count({
-        where: { coin, status: 'open', type: 'sell' },
+    const totalOffers = await prisma.offer.count({
+        where: { coin, type: 'sell' },
     });
 
-    console.log(`Orders found: ${orders.length}, Total orders: ${totalOrders}`);
+    console.log(`Offers found: ${offers.length}, Total offers: ${totalOffers}`);
 
-    const buttons = orders.map((order, i) => [
+    const buttons = offers.map((offer, i) => [
         Markup.button.callback(
-            `Сделка ${i + 1}: ${order.amount} ${coin}, ${order.fiatAmount} RUB`,
-            `select_buy_${order.id}`
+            `Оферта ${i + 1}: ${offer.amount} ${coin}, ${offer.minDealAmount} - ${offer.maxDealAmount} ${coin}`,
+            `select_buy_${offer.id}`
         ),
     ]);
 
-    if (totalOrders > pageSize) {
+    if (totalOffers > pageSize) {
         buttons.push([Markup.button.callback('>', 'next_buy')]);
     }
 
-    await ctx.editMessageText('Выберите подходящую сделку', Markup.inlineKeyboard(buttons));
+    await ctx.editMessageText('Выберите подходящую оферту', Markup.inlineKeyboard(buttons));
 });
 
 bot.action(/sell_(BTC|LTC|USDT)/, async (ctx) => {
@@ -167,71 +228,85 @@ bot.action(/sell_(BTC|LTC|USDT)/, async (ctx) => {
 
     const pageSize = 5;
     const skip = 0;
-    const orders = await prisma.order.findMany({
-        where: { coin, status: 'open', type: 'buy' },
+    const offers = await prisma.offer.findMany({
+        where: { coin, type: 'buy' },
         take: pageSize,
         skip,
     });
 
-    const totalOrders = await prisma.order.count({
-        where: { coin, status: 'open', type: 'buy' },
+    const totalOffers = await prisma.offer.count({
+        where: { coin, type: 'buy' },
     });
 
-    console.log(`Orders found: ${orders.length}, Total orders: ${totalOrders}`);
+    console.log(`Offers found: ${offers.length}, Total offers: ${totalOffers}`);
 
-    const buttons = orders.map((order, i) => [
+    const buttons = offers.map((offer, i) => [
         Markup.button.callback(
-            `Сделка ${i + 1}: ${order.fiatAmount} RUB, ${order.amount} ${coin}`,
-            `select_sell_${order.id}`
+            `Оферта ${i + 1}: ${offer.minDealAmount} - ${offer.maxDealAmount} ${coin}`,
+            `select_sell_${offer.id}`
         ),
     ]);
 
-    if (totalOrders > pageSize) {
+    if (totalOffers > pageSize) {
         buttons.push([Markup.button.callback('>', 'next_sell')]);
     }
 
-    await ctx.editMessageText('Выберите подходящую сделку', Markup.inlineKeyboard(buttons));
+    await ctx.editMessageText('Выберите подходящую оферту', Markup.inlineKeyboard(buttons));
 });
 
-bot.action(/withdraw_(BTC|LTC|USDT)/, async (ctx) => {
+bot.action(/withdraw_(BTC|LTC|USDT|XMR)/, async (ctx) => {
     const coin = ctx.match[1];
     if (!ctx.from?.id) return;
     const userId = ctx.from.id.toString();
-    const user = await prisma.user.findUnique({ where: { userId } });
-    if (!user) {
-        await ctx.editMessageText('Ошибка: пользователь не найден', Markup.inlineKeyboard([]));
+    const wallet = await prisma.wallet.findFirst({
+        where: { user: { chatId: userId }, coin }
+    });
+    if (!wallet) {
+        await ctx.editMessageText('Ошибка: кошелек не найден', Markup.inlineKeyboard([]));
         return;
     }
 
-    const balance = coin === 'BTC' ? user.btcBalance :
-        coin === 'LTC' ? user.ltcBalance :
-            user.usdtBalance;
+    const { confirmed } = await getWalletBalance(wallet.address, coin, userId);
+    await prisma.wallet.update({
+        where: { id: wallet.id },
+        data: { balance: confirmed }
+    });
 
     const platformFeePercent = parseFloat(process.env.PLATFORM_WITHDRAW_FEE_PERCENT || '5');
 
     await setState(userId, { coin, action: 'withdraw_amount' });
     await ctx.editMessageText(
-        `Сколько ${coin} хотите вывести? На вашем кошельке сейчас ${balance} ${coin}. Комиссия платформы за вывод ${platformFeePercent}%`,
+        `Сколько ${coin} хотите вывести? На вашем кошельке сейчас ${confirmed} ${coin}. Комиссия платформы за вывод ${platformFeePercent}%`,
         { reply_markup: { inline_keyboard: [] } }
     );
 });
 
 bot.action(/select_buy_(\d+)/, async (ctx) => {
-    const orderId = parseInt(ctx.match[1], 10);
+    const offerId = parseInt(ctx.match[1], 10);
     if (!ctx.from?.id) return;
-    await setState(ctx.from.id.toString(), { orderId, action: 'buy_amount' });
+    await setState(ctx.from.id.toString(), { offerId, action: 'buy_amount' });
     const state = await getState(ctx.from.id.toString());
     if (!state.coin) return;
-    await ctx.editMessageText(`Сколько ${state.coin} хотите приобрести?`, { reply_markup: { inline_keyboard: [] } });
+    const offer = await prisma.offer.findUnique({ where: { id: offerId } });
+    if (!offer) return;
+    await ctx.editMessageText(
+        `Сколько ${state.coin} хотите приобрести? (от ${offer.minDealAmount} до ${offer.maxDealAmount} ${state.coin})`,
+        { reply_markup: { inline_keyboard: [] } }
+    );
 });
 
 bot.action(/select_sell_(\d+)/, async (ctx) => {
-    const orderId = parseInt(ctx.match[1], 10);
+    const offerId = parseInt(ctx.match[1], 10);
     if (!ctx.from?.id) return;
-    await setState(ctx.from.id.toString(), { orderId, action: 'sell_amount' });
+    await setState(ctx.from.id.toString(), { offerId, action: 'sell_amount' });
     const state = await getState(ctx.from.id.toString());
     if (!state.coin) return;
-    await ctx.editMessageText(`Сколько ${state.coin} хотите продать?`, { reply_markup: { inline_keyboard: [] } });
+    const offer = await prisma.offer.findUnique({ where: { id: offerId } });
+    if (!offer) return;
+    await ctx.editMessageText(
+        `Сколько ${state.coin} хотите продать? (от ${offer.minDealAmount} до ${offer.maxDealAmount} ${state.coin})`,
+        { reply_markup: { inline_keyboard: [] } }
+    );
 });
 
 bot.action('prev_buy', async (ctx) => {
@@ -247,28 +322,27 @@ bot.action('prev_buy', async (ctx) => {
 
     const pageSize = 5;
     const skip = page * pageSize;
-    const orders = await prisma.order.findMany({
-        where: { coin: state.coin, status: 'open', type: 'sell' },
+    const offers = await prisma.offer.findMany({
+        where: { coin: state.coin, type: 'sell' },
         take: pageSize,
         skip,
     });
 
-    const totalOrders = await prisma.order.count({
-        where: { coin: state.coin, status: 'open', type: 'sell' },
+    const totalOffers = await prisma.offer.count({
+        where: { coin: state.coin, type: 'sell' },
     });
 
-    const buttons = orders.map((order, i) => [
+    const buttons = offers.map((offer, i) => [
         Markup.button.callback(
-            `Сделка ${i + 1}: ${order.amount} ${state.coin}, ${order.fiatAmount} RUB`,
-            `select_buy_${order.id}`
+            `Оферта ${i + 1}: ${offer.amount} ${state.coin}, ${offer.minDealAmount} - ${offer.maxDealAmount} ${state.coin}`,
+            `select_buy_${offer.id}`
         ),
     ]);
 
-    const totalPages = Math.ceil(totalOrders / pageSize);
+    const totalPages = Math.ceil(totalOffers / pageSize);
     const currentPage = page;
 
-    // Определяем кнопки навигации
-    if (totalOrders > pageSize) {
+    if (totalOffers > pageSize) {
         if (currentPage === 0) {
             buttons.push([Markup.button.callback('>', 'next_buy')]);
         } else if (currentPage === totalPages - 1) {
@@ -281,7 +355,7 @@ bot.action('prev_buy', async (ctx) => {
         }
     }
 
-    await ctx.editMessageText('Выберите подходящую сделку', Markup.inlineKeyboard(buttons));
+    await ctx.editMessageText('Выберите подходящую оферту', Markup.inlineKeyboard(buttons));
 });
 
 bot.action('next_buy', async (ctx) => {
@@ -294,35 +368,35 @@ bot.action('next_buy', async (ctx) => {
     const pageSize = 5;
     const skip = page * pageSize;
 
-    const orders = await prisma.order.findMany({
-        where: { coin: state.coin, status: 'open', type: 'sell' },
+    const offers = await prisma.offer.findMany({
+        where: { coin: state.coin, type: 'sell' },
         take: pageSize,
         skip,
     });
 
-    const totalOrders = await prisma.order.count({
-        where: { coin: state.coin, status: 'open', type: 'sell' },
+    const totalOffers = await prisma.offer.count({
+        where: { coin: state.coin, type: 'sell' },
     });
 
-    if (orders.length === 0) {
+    if (offers.length === 0) {
         await setState(userId, { page: page - 1 });
-        await ctx.editMessageText('Нет доступных сделок на этой странице', Markup.inlineKeyboard([]));
+        await ctx.editMessageText('Нет доступных оферт на этой странице', Markup.inlineKeyboard([]));
         return;
     }
 
     await setState(userId, { page });
 
-    const buttons = orders.map((order, i) => [
+    const buttons = offers.map((offer, i) => [
         Markup.button.callback(
-            `Сделка ${i + 1}: ${order.amount} ${state.coin}, ${order.fiatAmount} RUB`,
-            `select_buy_${order.id}`
+            `Оферта ${i + 1}: ${offer.amount} ${state.coin}, ${offer.minDealAmount} - ${offer.maxDealAmount} ${state.coin}`,
+            `select_buy_${offer.id}`
         ),
     ]);
 
-    const totalPages = Math.ceil(totalOrders / pageSize);
+    const totalPages = Math.ceil(totalOffers / pageSize);
     const currentPage = page;
 
-    if (totalOrders > pageSize) {
+    if (totalOffers > pageSize) {
         if (currentPage === totalPages - 1) {
             buttons.push([Markup.button.callback('<', 'prev_buy')]);
         } else {
@@ -333,97 +407,7 @@ bot.action('next_buy', async (ctx) => {
         }
     }
 
-    await ctx.editMessageText('Выберите подходящую сделку', Markup.inlineKeyboard(buttons));
-});
-
-bot.action('next_buy', async (ctx) => {
-    if (!ctx.from?.id) return;
-    const userId = ctx.from.id.toString();
-    const state = await getState(userId);
-    if (!state.coin) return;
-
-    const page = (state.page || 0) + 1;
-    const pageSize = 5;
-    const skip = page * pageSize;
-
-    const orders = await prisma.order.findMany({
-        where: { coin: state.coin, status: 'open', type: 'buy' },
-        take: pageSize,
-        skip,
-    });
-
-    const totalOrders = await prisma.order.count({
-        where: { coin: state.coin, status: 'open', type: 'buy' },
-    });
-
-    if (orders.length === 0) {
-        await setState(userId, { page: page - 1 });
-        await ctx.editMessageText('Нет доступных сделок на этой странице', Markup.inlineKeyboard([]));
-        return;
-    }
-
-    await setState(userId, { page });
-
-    const buttons = orders.map((order, i) => [
-        Markup.button.callback(
-            `Сделка ${i + 1}: ${order.amount} ${state.coin}, ${order.fiatAmount} RUB`,
-            `select_buy_${order.id}`
-        ),
-    ]);
-
-    if (totalOrders > pageSize) {
-        buttons.push([
-            Markup.button.callback('<', 'prev_buy'),
-            Markup.button.callback('>', 'next_buy'),
-        ]);
-    }
-
-    await ctx.editMessageText('Выберите подходящую сделку', Markup.inlineKeyboard(buttons));
-});
-
-bot.action('next_buy', async (ctx) => {
-    if (!ctx.from?.id) return;
-    const userId = ctx.from.id.toString();
-    const state = await getState(userId);
-    if (!state.coin) return;
-
-    const page = (state.page || 0) + 1;
-    const pageSize = 5;
-    const skip = page * pageSize;
-
-    const orders = await prisma.order.findMany({
-        where: { coin: state.coin, status: 'open', type: 'buy' },
-        take: pageSize,
-        skip,
-    });
-
-    const totalOrders = await prisma.order.count({
-        where: { coin: state.coin, status: 'open', type: 'buy' },
-    });
-
-    if (orders.length === 0) {
-        await setState(userId, { page: page - 1 });
-        await ctx.editMessageText('Нет доступных сделок на этой странице', Markup.inlineKeyboard([]));
-        return;
-    }
-
-    await setState(userId, { page });
-
-    const buttons = orders.map((order, i) => [
-        Markup.button.callback(
-            `Сделка ${i + 1}: ${order.amount} ${state.coin}, ${order.fiatAmount} RUB`,
-            `select_buy_${order.id}`
-        ),
-    ]);
-
-    if (totalOrders > pageSize) {
-        buttons.push([
-            Markup.button.callback('<', 'prev_buy'),
-            Markup.button.callback('>', 'next_buy'),
-        ]);
-    }
-
-    await ctx.editMessageText('Выберите подходящую сделку', Markup.inlineKeyboard(buttons));
+    await ctx.editMessageText('Выберите подходящую оферту', Markup.inlineKeyboard(buttons));
 });
 
 bot.action('prev_sell', async (ctx) => {
@@ -439,27 +423,27 @@ bot.action('prev_sell', async (ctx) => {
 
     const pageSize = 5;
     const skip = page * pageSize;
-    const orders = await prisma.order.findMany({
-        where: { coin: state.coin, status: 'open', type: 'buy' },
+    const offers = await prisma.offer.findMany({
+        where: { coin: state.coin, type: 'buy' },
         take: pageSize,
         skip,
     });
 
-    const totalOrders = await prisma.order.count({
-        where: { coin: state.coin, status: 'open', type: 'buy' },
+    const totalOffers = await prisma.offer.count({
+        where: { coin: state.coin, type: 'buy' },
     });
 
-    const buttons = orders.map((order, i) => [
+    const buttons = offers.map((offer, i) => [
         Markup.button.callback(
-            `Сделка ${i + 1}: ${order.fiatAmount} RUB, ${order.amount} ${state.coin}`,
-            `select_sell_${order.id}`
+            `Оферта ${i + 1}: ${offer.minDealAmount} - ${offer.maxDealAmount} ${state.coin}`,
+            `select_sell_${offer.id}`
         ),
     ]);
 
-    const totalPages = Math.ceil(totalOrders / pageSize);
+    const totalPages = Math.ceil(totalOffers / pageSize);
     const currentPage = page;
 
-    if (totalOrders > pageSize) {
+    if (totalOffers > pageSize) {
         if (currentPage === 0) {
             buttons.push([Markup.button.callback('>', 'next_sell')]);
         } else if (currentPage === totalPages - 1) {
@@ -472,7 +456,7 @@ bot.action('prev_sell', async (ctx) => {
         }
     }
 
-    await ctx.editMessageText('Выберите подходящую сделку', Markup.inlineKeyboard(buttons));
+    await ctx.editMessageText('Выберите подходящую оферту', Markup.inlineKeyboard(buttons));
 });
 
 bot.action('next_sell', async (ctx) => {
@@ -485,35 +469,35 @@ bot.action('next_sell', async (ctx) => {
     const pageSize = 5;
     const skip = page * pageSize;
 
-    const orders = await prisma.order.findMany({
-        where: { coin: state.coin, status: 'open', type: 'buy' },
+    const offers = await prisma.offer.findMany({
+        where: { coin: state.coin, type: 'buy' },
         take: pageSize,
         skip,
     });
 
-    const totalOrders = await prisma.order.count({
-        where: { coin: state.coin, status: 'open', type: 'buy' },
+    const totalOffers = await prisma.offer.count({
+        where: { coin: state.coin, type: 'buy' },
     });
 
-    if (orders.length === 0) {
+    if (offers.length === 0) {
         await setState(userId, { page: page - 1 });
-        await ctx.editMessageText('Нет доступных сделок на этой странице', Markup.inlineKeyboard([]));
+        await ctx.editMessageText('Нет доступных оферт на этой странице', Markup.inlineKeyboard([]));
         return;
     }
 
     await setState(userId, { page });
 
-    const buttons = orders.map((order, i) => [
+    const buttons = offers.map((offer, i) => [
         Markup.button.callback(
-            `Сделка ${i + 1}: ${order.fiatAmount} RUB, ${order.amount} ${state.coin}`,
-            `select_sell_${order.id}`
+            `Оферта ${i + 1}: ${offer.minDealAmount} - ${offer.maxDealAmount} ${state.coin}`,
+            `select_sell_${offer.id}`
         ),
     ]);
 
-    const totalPages = Math.ceil(totalOrders / pageSize);
+    const totalPages = Math.ceil(totalOffers / pageSize);
     const currentPage = page;
 
-    if (totalOrders > pageSize) {
+    if (totalOffers > pageSize) {
         if (currentPage === totalPages - 1) {
             buttons.push([Markup.button.callback('<', 'prev_sell')]);
         } else {
@@ -524,52 +508,7 @@ bot.action('next_sell', async (ctx) => {
         }
     }
 
-    await ctx.editMessageText('Выберите подходящую сделку', Markup.inlineKeyboard(buttons));
-});
-
-bot.action('next_sell', async (ctx) => {
-    if (!ctx.from?.id) return;
-    const userId = ctx.from.id.toString();
-    const state = await getState(userId);
-    if (!state.coin) return;
-
-    const page = (state.page || 0) + 1;
-    const pageSize = 5;
-    const skip = page * pageSize;
-
-    const orders = await prisma.order.findMany({
-        where: { coin: state.coin, status: 'open', type: 'sell' },
-        take: pageSize,
-        skip,
-    });
-
-    const totalOrders = await prisma.order.count({
-        where: { coin: state.coin, status: 'open', type: 'sell' },
-    });
-
-    if (orders.length === 0) {
-        await setState(userId, { page: page - 1 });
-        await ctx.editMessageText('Нет доступных сделок на этой странице', Markup.inlineKeyboard([]));
-        return;
-    }
-
-    await setState(userId, { page });
-
-    const buttons = orders.map((order, i) => [
-        Markup.button.callback(
-            `Сделка ${i + 1}: ${order.fiatAmount} RUB, ${order.amount} ${state.coin}`,
-            `select_sell_${order.id}`
-        ),
-    ]);
-
-    if (totalOrders > pageSize) {
-        buttons.push([
-            Markup.button.callback('<', 'prev_sell'),
-            Markup.button.callback('>', 'next_sell'),
-        ]);
-    }
-
-    await ctx.editMessageText('Выберите подходящую сделку', Markup.inlineKeyboard(buttons));
+    await ctx.editMessageText('Выберите подходящую оферту', Markup.inlineKeyboard(buttons));
 });
 
 bot.action('cancel', async (ctx) => {
@@ -578,53 +517,61 @@ bot.action('cancel', async (ctx) => {
     await clearState(ctx.from.id.toString());
 });
 
-bot.command('createorder', async (ctx) => {
+bot.command('createoffer', async (ctx) => {
     if (!ctx.from?.id) return;
     const userId = ctx.from.id.toString();
     if (!warrantHolders.includes(userId)) {
+        await ctx.reply('Только держатели варрантов могут создавать оферты.');
         return;
     }
 
     const args = ctx.message.text.split(' ').slice(1);
-    if (args.length < 4) {
-        await ctx.reply('Неверный формат.');
+    if (args.length < 5) {
+        await ctx.reply('Неверный формат. Используйте: /createoffer <type> <coin> <amount> <minDealAmount> <maxDealAmount> <markupPercent>');
         return;
     }
 
-    const [type, coin, amountStr, markupPercentStr] = [...args];
+    const [type, coin, amountStr, minDealAmountStr, maxDealAmountStr, markupPercentStr] = args;
     if (!['sell', 'buy'].includes(type)) {
         await ctx.reply('Тип должен быть buy или sell.');
         return;
     }
-    if (!['BTC', 'LTC', 'USDT'].includes(coin)) {
-        await ctx.reply('Валюта должна быть BTC, LTC или USDT.');
+    if (!['BTC', 'LTC', 'USDT', 'XMR'].includes(coin)) {
+        await ctx.reply('Валюта должна быть BTC, LTC, USDT или XMR.');
         return;
     }
     const amount = parseFloat(amountStr);
+    const minDealAmount = parseFloat(minDealAmountStr);
+    const maxDealAmount = parseFloat(maxDealAmountStr);
     const markupPercent = parseFloat(markupPercentStr);
-    if (isNaN(amount) || isNaN(markupPercent)) {
-        await ctx.reply('Количество и процент наценки должны быть числами.');
+
+    if (isNaN(amount) || isNaN(minDealAmount) || isNaN(maxDealAmount) || isNaN(markupPercent)) {
+        await ctx.reply('Количество, минимальная и максимальная суммы сделки, и процент наценки должны быть числами.');
+        return;
+    }
+
+    if (minDealAmount > maxDealAmount || minDealAmount < 0 || maxDealAmount > amount) {
+        await ctx.reply('Неверные параметры: minDealAmount должен быть меньше maxDealAmount, а maxDealAmount не должен превышать amount.');
         return;
     }
 
     try {
-        const fees = await getBlockCypherFees(coin);
-        const totalAmount = amount * (1 + markupPercent / 100);
-        const fiatAmount = await getCryptoPrice(coin, totalAmount);
-        const order = await prisma.order.create({
+        const offer = await prisma.offer.create({
             data: {
-                userId,
+                userId: (await prisma.user.findUnique({ where: { chatId: userId } }))!.id,
                 type,
                 coin,
                 amount,
-                fiatAmount,
+                minDealAmount,
+                maxDealAmount,
                 markupPercent,
-                minerFee: fees.medium_fee,
             },
         });
-        await ctx.reply(`Заказ №${order.id} успешно создан! \nТип: ${order.type} \nСумма: ${order.amount} ${order.coin} ~ ${order.fiatAmount} RUB \nНаценка: ${order.markupPercent}%`);
+        await ctx.reply(
+            `Оферта №${offer.id} успешно создана! \nТип: ${offer.type} \nВалюта: ${offer.coin} \nСумма: ${offer.amount} \nДиапазон сделки: ${offer.minDealAmount} - ${offer.maxDealAmount} \nНаценка: ${offer.markupPercent}%`
+        );
     } catch (error) {
-        await ctx.reply('Ошибка при создании заказа. Проверьте данные и попробуйте снова.');
+        await ctx.reply('Ошибка при создании оферты. Проверьте данные и попробуйте снова.');
         console.error(error);
     }
 });
@@ -641,13 +588,18 @@ bot.on('text', async (ctx) => {
             return;
         }
 
-        const order = await prisma.order.findUnique({ where: { id: state.orderId } });
-        if (!order || order.type !== 'sell') return;
+        const offer = await prisma.offer.findUnique({ where: { id: state.offerId } });
+        if (!offer || offer.type !== 'sell') return;
 
-        const { totalAmount, currency } = await calculateUserTransaction('buy', amount, order);
+        if (amount < offer.minDealAmount || amount > offer.maxDealAmount) {
+            await ctx.reply(`Ошибка: сумма должна быть в диапазоне ${offer.minDealAmount} - ${offer.maxDealAmount} ${offer.coin}.`);
+            return;
+        }
+
+        const { totalAmount, currency } = await calculateUserTransaction('buy', amount, offer);
 
         await ctx.reply(
-            `Вы покупаете ${amount} ${order.coin} с наценкой продавца ${order.markupPercent}%. ` +
+            `Вы покупаете ${amount} ${offer.coin} с наценкой продавца ${offer.markupPercent}%. ` +
             `Итоговая сумма перевода ${totalAmount} ${currency}. Готовы перейти к оплате?`,
             Markup.inlineKeyboard([
                 [Markup.button.callback('Отменить', 'cancel'), Markup.button.callback('Перейти', 'proceed_buy')],
@@ -661,14 +613,19 @@ bot.on('text', async (ctx) => {
             return;
         }
 
-        const order = await prisma.order.findUnique({ where: { id: state.orderId } });
-        if (!order || order.type !== 'buy') return;
+        const offer = await prisma.offer.findUnique({ where: { id: state.offerId } });
+        if (!offer || offer.type !== 'buy') return;
 
-        const { totalAmount, currency } = await calculateUserTransaction('sell', amount, order);
-        const fiatAmount = await getCryptoPrice(order.coin, amount);
+        if (amount < offer.minDealAmount || amount > offer.maxDealAmount) {
+            await ctx.reply(`Ошибка: сумма должна быть в диапазоне ${offer.minDealAmount} - ${offer.maxDealAmount} ${offer.coin}.`);
+            return;
+        }
+
+        const { totalAmount, currency } = await calculateUserTransaction('sell', amount, offer);
+        const fiatAmount = await getCryptoPrice(offer.coin, amount);
 
         await ctx.reply(
-            `Вы продаете ${amount} ${order.coin} с наценкой ${order.markupPercent}%. ` +
+            `Вы продаете ${amount} ${offer.coin} с наценкой ${offer.markupPercent}%. ` +
             `Итоговая сумма перевода ${totalAmount} ${currency}. Вы получите ${fiatAmount} RUB. Готовы оплатить?`,
             Markup.inlineKeyboard([
                 [Markup.button.callback('Отменить', 'cancel'), Markup.button.callback('Оплатить', 'proceed_sell')],
@@ -695,19 +652,23 @@ bot.on('text', async (ctx) => {
         }
 
         const user = await prisma.user.findUnique({
-            where: { userId }
+            where: { chatId: userId },
+            include: { wallets: { where: { coin } } }
         });
-        if (!user) {
-            await ctx.reply('Ошибка: пользователь не найден');
+        if (!user || !user.wallets[0]) {
+            await ctx.reply('Ошибка: пользователь или кошелек не найден');
             return;
         }
 
-        const balance = coin === 'BTC' ? user.btcBalance :
-            coin === 'LTC' ? user.ltcBalance :
-                user.usdtBalance;
+        const wallet = user.wallets[0];
+        const { confirmed } = await getWalletBalance(wallet.address, coin, userId);
+        await prisma.wallet.update({
+            where: { id: wallet.id },
+            data: { balance: confirmed }
+        });
 
-        if (amount > balance) {
-            await ctx.reply(`Недостаточно средств. Ваш баланс: ${balance} ${coin}`);
+        if (amount > confirmed) {
+            await ctx.reply(`Недостаточно средств. Ваш подтверждённый баланс: ${confirmed} ${coin}`);
             return;
         }
 
@@ -716,7 +677,7 @@ bot.on('text', async (ctx) => {
         const txId = await withdrawToExternalWallet(
             coin,
             amount,
-            ctx.from.id.toString(),
+            userId,
             address
         );
 
@@ -725,18 +686,14 @@ bot.on('text', async (ctx) => {
             return;
         }
 
-        const updateData = coin === 'BTC' ? { btcBalance: balance - amount } :
-            coin === 'LTC' ? { ltcBalance: balance - amount } :
-                { usdtBalance: balance - amount };
-
-        await prisma.user.update({
-            where: { userId },
-            data: updateData
+        await prisma.wallet.update({
+            where: { id: wallet.id },
+            data: { balance: confirmed - amount }
         });
 
         await prisma.transaction.create({
             data: {
-                userId,
+                userId: user.id,
                 coin,
                 txId,
                 amount: netAmount,
@@ -753,81 +710,169 @@ bot.on('text', async (ctx) => {
 bot.action('proceed_buy', async (ctx) => {
     if (!ctx.from?.id) return;
     const state = await getState(ctx.from.id.toString());
-    const order = await prisma.order.findUnique({ where: { id: state.orderId } });
-    if (!order) return;
-    const user = await prisma.user.findUnique({ where: { userId: order.userId } });
+    const offer = await prisma.offer.findUnique({ where: { id: state.offerId } });
+    if (!offer) return;
+    const user = await prisma.user.findUnique({ where: { id: offer.userId } });
     if (!user) return;
-    await prisma.order.update({ where: { id: state.orderId }, data: { buyerId: ctx.from.id.toString(), status: 'pending' } });
-    const netAmount = await calculateOrderTransaction('buy', order);
+
+    const fees = await getBlockCypherFees(offer.coin);
+    const txWeight = 150;
+    const minerFee = fees.medium_fee * txWeight / 1e8;
+    const amount = state.amount || 0;
+    const fiatAmount = await getCryptoPrice(offer.coin, amount * (1 + offer.markupPercent / 100));
+    const platformFee = amount * 0.05;
+    const warrantHolderFee = amount * 0.05;
+
+    const transaction = await prisma.transaction.create({
+        data: {
+            userId: user.id,
+            coin: offer.coin,
+            amount,
+            type: 'buy',
+            status: 'pending',
+            txId: `pending_${Date.now()}`
+        }
+    });
+
+    const deal = await prisma.deal.create({
+        data: {
+            userId: (await prisma.user.findUnique({ where: { chatId: ctx.from.id.toString() } }))!.id,
+            offerId: offer.id,
+            amount,
+            fiatAmount,
+            clientFee: platformFee,
+            warrantHolderFee,
+            minerFee,
+            platformFee,
+            status: 'pending',
+            transactionId: transaction.id
+        }
+    });
+
     await ctx.editMessageText(
-        `Реквизиты продавца ${user.username}. Переведите ${netAmount} RUB продавцу и нажмите кнопку "Оплатил"`,
-        Markup.inlineKeyboard([Markup.button.callback('Оплатил', 'paid')])
+        `Реквизиты продавца ${user.username}. Переведите ${fiatAmount} RUB продавцу и нажмите кнопку "Оплатил"`,
+        Markup.inlineKeyboard([Markup.button.callback('Оплатил', `paid_${deal.id}`)])
     );
 });
 
 bot.action('proceed_sell', async (ctx) => {
     if (!ctx.from?.id) return;
     const state = await getState(ctx.from.id.toString());
-    const order = await prisma.order.findUnique({ where: { id: state.orderId } });
-    if (!order) return;
-    const buyer = await prisma.user.findUnique({ where: { userId: ctx.from.id.toString() } });
+    const offer = await prisma.offer.findUnique({ where: { id: state.offerId } });
+    if (!offer) return;
+    const buyer = await prisma.user.findUnique({ where: { chatId: ctx.from.id.toString() } });
     if (!buyer) return;
-    await prisma.order.update({ where: { id: state.orderId }, data: { buyerId: ctx.from.id.toString(), status: 'pending' } });
-    const fees = await getBlockCypherFees(order.coin);
+
+    const fees = await getBlockCypherFees(offer.coin);
     const txWeight = 150;
     const minerFee = fees.medium_fee * txWeight / 1e8;
-    const amount = state.amount
-    if (!amount) return;
-    const totalAmount = amount * (1 + order.markupPercent / 100) + minerFee;
-    const fiatAmount = await getCryptoPrice(order.coin, amount);
+    const amount = state.amount || 0;
+    const fiatAmount = await getCryptoPrice(offer.coin, amount);
+    const platformFee = amount * 0.05;
+    const warrantHolderFee = amount * 0.05;
+
+    const transaction = await prisma.transaction.create({
+        data: {
+            userId: buyer.id,
+            coin: offer.coin,
+            amount,
+            type: 'buy',
+            status: 'pending',
+            txId: `pending_${Date.now()}`
+        }
+    });
+
+    const deal = await prisma.deal.create({
+        data: {
+            userId: (await prisma.user.findUnique({ where: { chatId: ctx.from.id.toString() } }))!.id,
+            offerId: offer.id,
+            amount,
+            fiatAmount,
+            clientFee: platformFee,
+            warrantHolderFee,
+            minerFee,
+            platformFee,
+            status: 'pending',
+            transactionId: transaction.id
+        }
+    });
+
     await ctx.telegram.sendMessage(
-        order.userId,
-        `Пришла оплата сделки на продажу №${order.id} на сумму ${totalAmount} ${order.coin}. ` +
+        (await prisma.user.findUnique({ where: { id: offer.userId } }))!.chatId,
+        `Пришла оплата сделки на продажу №${deal.id} на сумму ${amount} ${offer.coin}. ` +
         `Реквизиты покупателя ${buyer.username}. Переведите ${fiatAmount} RUB покупателю и нажмите кнопку "Получил и отправил"`,
-        Markup.inlineKeyboard([Markup.button.callback('Получил и отправил', 'received')])
+        Markup.inlineKeyboard([Markup.button.callback('Получил и отправил', `received_${deal.id}`)])
     );
     await ctx.editMessageText('Ожидайте ответ продавца');
 });
 
-bot.action('paid', async (ctx) => {
+bot.action(/paid_(\d+)/, async (ctx) => {
     if (!ctx.from?.id) return;
-    const state = await getState(ctx.from.id.toString());
-    const order = await prisma.order.findUnique({ where: { id: state.orderId } });
-    if (!order) return;
+    const dealId = parseInt(ctx.match[1], 10);
+    const deal = await prisma.deal.findUnique({
+        where: { id: dealId },
+        include: { offer: true }
+    });
+    if (!deal) return;
+
     await ctx.editMessageText('Ожидайте ответ продавца');
-    const fees = await getBlockCypherFees(order.coin);
+    const fees = await getBlockCypherFees(deal.offer.coin);
     const txWeight = 150;
     const minerFee = fees.medium_fee * txWeight / 1e8;
-    const amount = state.amount
-    if (!amount) return;
-    const totalAmount = amount * (1 + order.markupPercent / 100) + minerFee;
-    const fiatAmount = await getCryptoPrice(order.coin, totalAmount);
+    const fiatAmount = await getCryptoPrice(deal.offer.coin, deal.amount * (1 + deal.offer.markupPercent / 100));
+
     await ctx.telegram.sendMessage(
-        order.userId,
-        `Пришла оплата сделки на покупку №${order.id} на сумму ${fiatAmount} RUB. Убедитесь в этом и нажмите кнопку "Получил"`,
-        Markup.inlineKeyboard([Markup.button.callback('Получил', 'received')])
+        (await prisma.user.findUnique({ where: { id: deal.offer.userId } }))!.chatId,
+        `Пришла оплата сделки на покупку №${deal.id} на сумму ${fiatAmount} RUB. Убедитесь в этом и нажмите кнопку "Получил"`,
+        Markup.inlineKeyboard([Markup.button.callback('Получил', `received_${deal.id}`)])
     );
 });
 
-bot.action('received', async (ctx) => {
+bot.action(/received_(\d+)/, async (ctx) => {
     if (!ctx.from?.id) return;
-    const state = await getState(ctx.from.id.toString());
-    const order = await prisma.order.findUnique({ where: { id: state.orderId } });
-    if (!order || !order.buyerId) return;
+    const dealId = parseInt(ctx.match[1], 10);
+    const deal = await prisma.deal.findUnique({
+        where: { id: dealId },
+        include: { offer: true }
+    });
+    if (!deal) return;
 
-    const seller = await prisma.user.findUnique({ where: { userId: order.userId } });
-    const buyer = await prisma.user.findUnique({ where: { userId: order.buyerId } });
+    const seller = await prisma.user.findUnique({ where: { id: deal.offer.userId } });
+    const buyer = await prisma.user.findUnique({ where: { id: deal.userId } });
     if (!seller || !buyer) return;
 
-    const platformFee = state.platformFee || 0;
-    const buyerAmount = state.amount || 0;
-    const sellerAmount = buyerAmount * (1 + order.markupPercent / 100);
+    const sellerWallet = await prisma.wallet.findFirst({
+        where: { userId: seller.id, coin: deal.offer.coin }
+    });
+    const buyerWallet = await prisma.wallet.findFirst({
+        where: { userId: buyer.id, coin: deal.offer.coin }
+    });
+    if (!sellerWallet || !buyerWallet) return;
+
+    const { confirmed: sellerBalance } = await getWalletBalance(sellerWallet.address, deal.offer.coin, seller.chatId);
+    const { confirmed: buyerBalance } = await getWalletBalance(buyerWallet.address, deal.offer.coin, buyer.chatId);
+
+    await prisma.wallet.update({
+        where: { id: sellerWallet.id },
+        data: { balance: sellerBalance }
+    });
+    await prisma.wallet.update({
+        where: { id: buyerWallet.id },
+        data: { balance: buyerBalance }
+    });
+
+    const sellerAmount = deal.amount * (1 + deal.offer.markupPercent / 100);
+
+    if (sellerBalance < sellerAmount) {
+        await ctx.reply('Ошибка: недостаточно средств у продавца.');
+        return;
+    }
 
     const txId = await sendP2PTransaction(
-        order.coin,
-        state.amount || 0,
-        order.userId,
-        order.buyerId
+        deal.offer.coin,
+        deal.amount,
+        seller.chatId,
+        buyer.chatId
     );
 
     if (!txId) {
@@ -835,49 +880,39 @@ bot.action('received', async (ctx) => {
         return;
     }
 
-    const updateSellerBalance = {
-        btcBalance: order.coin === 'BTC' ? seller.btcBalance - sellerAmount : seller.btcBalance,
-        ltcBalance: order.coin === 'LTC' ? seller.ltcBalance - sellerAmount : seller.ltcBalance,
-        usdtBalance: order.coin === 'USDT' ? seller.usdtBalance - sellerAmount : seller.usdtBalance
-    };
-
-    const updateBuyerBalance = {
-        btcBalance: order.coin === 'BTC' ? buyer.btcBalance + buyerAmount : buyer.btcBalance,
-        ltcBalance: order.coin === 'LTC' ? buyer.ltcBalance + buyerAmount : buyer.ltcBalance,
-        usdtBalance: order.coin === 'USDT' ? buyer.usdtBalance + buyerAmount : buyer.usdtBalance
-    };
-
-    await prisma.user.update({ where: { userId: order.userId }, data: updateSellerBalance });
-    await prisma.user.update({ where: { userId: order.buyerId }, data: updateBuyerBalance });
-
-    await prisma.order.update({
-        where: { id: state.orderId },
-        data: { status: 'completed', buyerConfirmed: true }
+    await prisma.wallet.update({
+        where: { id: sellerWallet.id },
+        data: { balance: sellerBalance - sellerAmount }
     });
 
-    await prisma.transaction.createMany({
-        data: [
-            {
-                userId: order.buyerId,
-                coin: order.coin,
-                txId,
-                amount: buyerAmount,
-                type: 'buy',
-                status: 'completed'
-            },
-            {
-                userId: order.userId,
-                coin: order.coin,
-                txId: `fee_${Date.now()}`,
-                amount: platformFee,
-                type: 'fee',
-                status: 'completed'
-            }
-        ]
+    await prisma.wallet.update({
+        where: { id: buyerWallet.id },
+        data: { balance: buyerBalance + deal.amount }
+    });
+
+    await prisma.deal.update({
+        where: { id: deal.id },
+        data: { status: 'completed', clientConfirmed: true }
+    });
+
+    await prisma.transaction.update({
+        where: { id: deal.transactionId },
+        data: { txId, status: 'completed' }
+    });
+
+    await prisma.transaction.create({
+        data: {
+            userId: seller.id,
+            coin: deal.offer.coin,
+            txId: `fee_${Date.now()}`,
+            amount: deal.platformFee,
+            type: 'fee',
+            status: 'completed'
+        }
     });
 
     await ctx.editMessageText('Транзакция прошла успешно!');
-    await ctx.telegram.sendMessage(order.buyerId, 'Транзакция прошла успешно!');
+    await ctx.telegram.sendMessage(buyer.chatId, 'Транзакция прошла успешно!');
     await clearState(ctx.from.id.toString());
 });
 
