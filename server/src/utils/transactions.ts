@@ -1,14 +1,8 @@
-import { getCryptoPrice } from './api';
 import { Offer } from '@prisma/client';
-import * as dotenv from "dotenv";
-import { getFeeRate } from './wallet';
+import { getCryptoPrice } from '../api/api';
+import { getFeeRate } from '../wallet/fees';
+import { config } from '../config/env';
 
-dotenv.config();
-
-const PLATFORM_BUY_FEE_PERCENT = parseFloat(process.env.PLATFORM_BUY_FEE_PERCENT || '5');
-const PLATFORM_SELL_FEE_PERCENT = parseFloat(process.env.PLATFORM_SELL_FEE_PERCENT || '5');
-const PLATFORM_WITHDRAW_FEE_PERCENT = parseFloat(process.env.PLATFORM_WITHDRAW_FEE_PERCENT || '5');
-const MINER_FEE_LEVEL = process.env.MINER_FEE || 'medium';
 const TX_WEIGHT = 150;
 const DEFAULT_FEE_RATE = 50;
 
@@ -20,7 +14,7 @@ export async function calculateUserTransaction(
     let feeRate = DEFAULT_FEE_RATE;
     if (offer.coin !== 'XMR') {
         try {
-            feeRate = await getFeeRate(offer.coin, MINER_FEE_LEVEL);
+            feeRate = await getFeeRate(offer.coin, config.MINER_FEE);
         } catch (error) {
             console.error('Error getting fee rate, using default:', error);
         }
@@ -58,15 +52,15 @@ export async function calculateOrderTransaction(
 ): Promise<{ totalAmount: number; currency: string }> {
     let feeRate = DEFAULT_FEE_RATE;
     try {
-        feeRate = await getFeeRate(offer.coin, MINER_FEE_LEVEL);
+        feeRate = await getFeeRate(offer.coin, config.MINER_FEE);
     } catch (error) {
         console.error('Error getting fee rate, using default:', error);
     }
 
     const minerFee = feeRate * TX_WEIGHT / 1e8;
     const platformFeePercent = type === 'buy'
-        ? PLATFORM_BUY_FEE_PERCENT / 100
-        : PLATFORM_SELL_FEE_PERCENT / 100;
+        ? config.PLATFORM_BUY_FEE_PERCENT / 100
+        : config.PLATFORM_SELL_FEE_PERCENT / 100;
 
     const platformFee = offer.amount * platformFeePercent;
 
@@ -96,7 +90,7 @@ export async function calculateOrderTransaction(
 
 export function calculateWithdrawal(amount: number): number {
     try {
-        const platformFee = amount * (PLATFORM_WITHDRAW_FEE_PERCENT / 100);
+        const platformFee = amount * (config.PLATFORM_WITHDRAW_FEE_PERCENT / 100);
         return parseFloat((amount - platformFee).toFixed(8));
     } catch (error) {
         console.error('Error calculating withdrawal:', error);

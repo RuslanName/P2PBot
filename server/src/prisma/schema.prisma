@@ -8,16 +8,15 @@ datasource db {
 }
 
 model User {
-  id           Int           @id @default(autoincrement())
-  chatId       String        @unique
-  username     String
-  firstName    String
-  lastName     String
-  wallets      Wallet[]      @relation()
-  deals        Deal[]        @relation("ClientDeals")
-  transactions Transaction[] @relation()
-  offers       Offer[]       @relation()
-  createdAt    DateTime      @default(now())
+  id            Int            @id @default(autoincrement())
+  chatId        String         @unique
+  username      String         @unique
+  firstName     String
+  lastName      String
+  wallets       Wallet[]       @relation()
+  deals         Deal[]         @relation("ClientDeals")
+  warrantHolder WarrantHolder? @relation()
+  createdAt     DateTime       @default(now())
 
   @@map("users")
 }
@@ -38,6 +37,17 @@ model Wallet {
   @@map("wallets")
 }
 
+model WarrantHolder {
+  id        Int      @id @default(autoincrement())
+  password  String
+  user      User     @relation(fields: [userId], references: [id])
+  userId    Int      @unique
+  createdAt DateTime
+  offers    Offer[]  @relation()
+
+  @@map("warrant_holders")
+}
+
 model Transaction {
   id        Int      @id @default(autoincrement())
   type      String
@@ -45,8 +55,6 @@ model Transaction {
   amount    Float
   txId      String   @unique
   status    String
-  user      User     @relation(fields: [userId], references: [id])
-  userId    Int
   deals     Deal[]   @relation()
   createdAt DateTime @default(now())
 
@@ -54,17 +62,17 @@ model Transaction {
 }
 
 model Offer {
-  id            Int      @id @default(autoincrement())
+  id            Int           @id @default(autoincrement())
   type          String
   coin          String
   amount        Float
   minDealAmount Float
   maxDealAmount Float
   markupPercent Float
-  warrantHolder User     @relation(fields: [userId], references: [id])
+  warrantHolder WarrantHolder @relation(fields: [userId], references: [id])
   userId        Int
-  deals         Deal[]   @relation()
-  createdAt     DateTime @default(now())
+  deals         Deal[]        @relation()
+  createdAt     DateTime      @default(now())
 
   @@map("offers")
 }

@@ -1,14 +1,6 @@
-const stateStore: { [key: string]: any } = {};
+import { BotState } from '../types';
 
-export interface BotState {
-    coin?: string;
-    offerId?: number;
-    action?: string;
-    amount?: number;
-    platformFee?: number;
-    withdrawAmount?: number;
-    page?: number;
-}
+const stateStore: { [key: string]: any } = {};
 
 export async function getState(userId: string): Promise<BotState> {
     if (!stateStore[userId]) {

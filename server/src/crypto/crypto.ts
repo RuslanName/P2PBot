@@ -1,12 +1,9 @@
 import crypto from 'crypto';
-import * as dotenv from 'dotenv';
+import { ENCRYPTION_KEY } from '../config/env';
 
-dotenv.config();
+if (!ENCRYPTION_KEY) throw new Error('Encryption key is required');
 
-const encryptionKey = process.env.ENCRYPTION_KEY;
-if (!encryptionKey) throw new Error('Encryption key is required');
-
-const key: string = encryptionKey;
+const key: string = ENCRYPTION_KEY;
 
 export function encrypt(text: string): string {
     const cipher = crypto.createCipheriv('aes-256-cbc', Buffer.from(key, 'hex'), Buffer.alloc(16, 0));
