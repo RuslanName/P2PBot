@@ -1,10 +1,10 @@
 import { useEffect, useState } from 'react';
 import { useStore } from './store/store';
 import Sidebar from './components/Sidebar';
-import UsersTable from './components/UsersTable';
-import OffersTable from './components/OffersTable';
-import DealsTable from './components/DealsTable';
-import WarrantHoldersTable from './components/WarrantHoldersTable';
+import UsersTable from './components/usersTable/UsersTable.tsx';
+import OffersTable from './components/offersTable/OffersTable.tsx';
+import DealsTable from './components/dealsTable/DealsTable.tsx';
+import WarrantHoldersTable from './components/warrantHoldersTable/WarrantHoldersTable.tsx';
 import Login from './components/Login';
 
 const App: React.FC = () => {

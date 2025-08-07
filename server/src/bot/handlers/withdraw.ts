@@ -2,14 +2,14 @@ import { Telegraf, Markup } from 'telegraf';
 import { PrismaClient } from '@prisma/client';
 import { BotContext } from '../bot';
 import { getState, setState, clearState } from '../state';
-import { withdrawToExternalWallet } from '../../wallet/wallet';
-import { calculateWithdrawal } from '../../utils/transactions';
 import { getWalletBalance } from "../../wallet/balance";
+import {withdrawToExternalWallet} from "../../wallet/transaction";
+import {config} from "../../config/env";
 
 const prisma = new PrismaClient();
 
 export function handleWithdraw(bot: Telegraf<BotContext>) {
-    bot.hears('Переводы', async (ctx) => {
+    bot.hears('💸 Вывод средств', async (ctx) => {
         if (!ctx.from?.id) return;
         await ctx.reply('С какого кошелька хотите вывести?', Markup.inlineKeyboard([
             [
@@ -28,25 +28,17 @@ export function handleWithdraw(bot: Telegraf<BotContext>) {
         const coin = ctx.match[1];
         if (!ctx.from?.id) return;
         const userId = ctx.from.id.toString();
-        const wallet = await prisma.wallet.findFirst({
-            where: { user: { chatId: userId }, coin }
-        });
-        if (!wallet) {
-            await ctx.editMessageText('Ошибка: кошелек не найден', Markup.inlineKeyboard([]));
-            return;
-        }
-
-        const { confirmed } = await getWalletBalance(wallet.address, coin, userId);
-        await prisma.wallet.update({
-            where: { id: wallet.id },
-            data: { balance: confirmed }
+        const user = await prisma.user.findFirst({
+            where: { chatId: userId }
         });
 
-        const platformFeePercent = parseFloat(process.env.PLATFORM_WITHDRAW_FEE_PERCENT || '5');
+        const { confirmed, unconfirmed, held } = await getWalletBalance(user.id, coin);
+
+        const totalAmount = (confirmed - unconfirmed - held).toFixed(8);
 
         await setState(userId, { coin, action: 'withdraw_amount' });
         await ctx.editMessageText(
-            `Сколько ${coin} хотите вывести? На вашем кошельке сейчас ${confirmed} ${coin}. Комиссия платформы за вывод ${platformFeePercent}%`,
+            `Сколько ${coin} хотите вывести? На вашем кошельке сейчас ${totalAmount} ${coin}. Комиссия платформы за вывод ${config.PLATFORM_WITHDRAW_FEE_PERCENT}%`,
             { reply_markup: { inline_keyboard: [] } }
         );
     });
@@ -65,7 +57,7 @@ export async function handleWithdrawText(ctx: BotContext) {
             return;
         }
         await setState(ctx.from.id.toString(), { withdrawAmount: amount });
-        await ctx.reply(`Введите адрес своего кошелька ${state.coin}`);
+        await ctx.reply(`Введите адрес своего ${state.coin} кошелька. Вводите внимательно!`);
         await setState(ctx.from.id.toString(), { action: 'withdraw_address' });
     } else if (state.action === 'withdraw_address') {
         if (!('text' in ctx.message)) return;
@@ -79,32 +71,14 @@ export async function handleWithdrawText(ctx: BotContext) {
         }
 
         const user = await prisma.user.findUnique({
-            where: { chatId: userId },
-            include: { wallets: { where: { coin } } }
+            where: { chatId: userId }
         });
-        if (!user || !user.wallets[0]) {
-            await ctx.reply('Ошибка: пользователь или кошелек не найден');
-            return;
-        }
-
-        const wallet = user.wallets[0];
-        const { confirmed } = await getWalletBalance(wallet.address, coin, userId);
-        await prisma.wallet.update({
-            where: { id: wallet.id },
-            data: { balance: confirmed }
-        });
-
-        if (amount > confirmed) {
-            await ctx.reply(`Недостаточно средств. Ваш подтверждённый баланс: ${confirmed} ${coin}`);
-            return;
-        }
-
-        const netAmount = calculateWithdrawal(amount);
+        if (!user) return;
 
         const txId = await withdrawToExternalWallet(
-            coin,
             amount,
-            userId,
+            coin,
+            user.id,
             address
         );
 
@@ -113,23 +87,7 @@ export async function handleWithdrawText(ctx: BotContext) {
             return;
         }
 
-        await prisma.wallet.update({
-            where: { id: wallet.id },
-            data: { balance: confirmed - amount }
-        });
-
-        await prisma.transaction.create({
-            data: {
-                userId: user.id,
-                coin,
-                txId,
-                amount: netAmount,
-                type: 'withdraw',
-                status: 'completed'
-            }
-        });
-
-        await ctx.reply(`Транзакция успешно отправлена! TXID: ${txId}`);
+        await ctx.reply(`Транзакция отправлена успешно! TxID: ${txId}`);
         await clearState(userId);
     }
 }

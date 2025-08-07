@@ -1,11 +1,6 @@
 import { useState } from 'react';
 import { useStore } from '../store/store';
-
-interface SidebarProps {
-    activeTab: 'users' | 'offers' | 'deals' | 'warrant-holders';
-    setActiveTab: (tab: 'users' | 'offers' | 'deals' | 'warrant-holders') => void;
-    role: string;
-}
+import type { SidebarProps } from "../types";
 
 const Sidebar: React.FC<SidebarProps> = ({ activeTab, setActiveTab, role }) => {
     const [isCollapsed, setIsCollapsed] = useState(false);

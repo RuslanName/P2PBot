@@ -8,17 +8,22 @@ datasource db {
 }
 
 model User {
-  id            Int            @id @default(autoincrement())
-  chatId        String         @unique
-  username      String         @unique
-  firstName     String
-  lastName      String
-  wallets       Wallet[]       @relation()
-  deals         Deal[]         @relation("ClientDeals")
-  warrantHolder WarrantHolder? @relation()
-  createdAt     DateTime       @default(now())
+  id             Int            @id @default(autoincrement())
+  chatId         String         @unique
+  username       String         @unique
+  firstName      String
+  lastName       String
+  referralLinkId String         @default(uuid(4))
+  referrer       User?          @relation("Referrals", fields: [referrerId], references: [id])
+  referrerId     Int?
+  referrals      User[]         @relation("Referrals")
+  wallets        Wallet[]       @relation()
+  deals          Deal[]         @relation("ClientDeals")
+  warrantHolder  WarrantHolder? @relation()
+  isBlocked      Boolean        @default(false)
+  createdAt      DateTime       @default(now())
 
-  @@map("users")
+  @@map("usersTable")
 }
 
 model Wallet {
@@ -29,9 +34,8 @@ model Wallet {
   balance            Float     @default(0)
   address            String    @unique
   privateKey         String
-  unconfirmedBalance Float?    @default(0)
+  unconfirmedBalance Float     @default(0)
   lastBalanceUpdate  DateTime?
-  walletPath         String?
   createdAt          DateTime  @default(now())
 
   @@map("wallets")
@@ -39,61 +43,66 @@ model Wallet {
 
 model WarrantHolder {
   id        Int      @id @default(autoincrement())
-  password  String
   user      User     @relation(fields: [userId], references: [id])
   userId    Int      @unique
-  createdAt DateTime
-  offers    Offer[]  @relation()
+  password  String   @default(uuid(4))
+  isBlocked Boolean  @default(false)
+  createdAt DateTime @default(now())
+  Offer     Offer[]
 
   @@map("warrant_holders")
 }
 
-model Transaction {
-  id        Int      @id @default(autoincrement())
-  type      String
-  coin      String
-  amount    Float
-  txId      String   @unique
-  status    String
-  deals     Deal[]   @relation()
-  createdAt DateTime @default(now())
-
-  @@map("transactions")
-}
-
 model Offer {
-  id            Int           @id @default(autoincrement())
-  type          String
-  coin          String
-  amount        Float
-  minDealAmount Float
-  maxDealAmount Float
-  markupPercent Float
-  warrantHolder WarrantHolder @relation(fields: [userId], references: [id])
-  userId        Int
-  deals         Deal[]        @relation()
-  createdAt     DateTime      @default(now())
+  id                          Int           @id @default(autoincrement())
+  type                        String
+  coin                        String
+  fiatCurrency                String[]
+  minDealAmount               Float
+  maxDealAmount               Float
+  markupPercent               Float
+  warrantHolderPaymentDetails String
+  warrantHolder               WarrantHolder @relation(fields: [userId], references: [id])
+  userId                      Int
+  deals                       Deal[]        @relation()
+  status                      String        @default("open")
+  createdAt                   DateTime      @default(now())
 
-  @@map("offers")
+  @@map("offersTable")
 }
 
 model Deal {
-  id               Int         @id @default(autoincrement())
-  client           User        @relation("ClientDeals", fields: [userId], references: [id])
-  userId           Int
-  offer            Offer       @relation(fields: [offerId], references: [id])
-  offerId          Int
-  transaction      Transaction @relation(fields: [transactionId], references: [id])
-  transactionId    Int
-  amount           Float
-  fiatAmount       Float
-  clientFee        Float
-  warrantHolderFee Float
-  minerFee         Float
-  platformFee      Float
-  status           String      @default("open")
-  clientConfirmed  Boolean     @default(false)
-  createdAt        DateTime    @default(now())
+  id                   Int      @id @default(autoincrement())
+  client               User     @relation("ClientDeals", fields: [userId], references: [id])
+  userId               Int
+  offer                Offer    @relation(fields: [offerId], references: [id])
+  offerId              Int
+  // transaction     Transaction? @relation(fields: [transactionId], references: [id])
+  // transactionId   Int?         @unique
+  amount               Float
+  fiatCurrency         String
+  markupPercent        Float
+  clientPaymentDetails String?
+  txId                 String?
+  clientConfirmed      Boolean  @default(false)
+  status               String   @default("pending")
+  createdAt            DateTime @default(now())
 
-  @@map("deals")
+  @@map("dealsTable")
 }
+
+// model Transaction {
+//   id                    Int      @id @default(autoincrement())
+//   deal                  Deal?    @relation()
+//   txId                  String   @unique
+//   clientSend            Float
+//   clientReceived        Float
+//   warrantHolderSend     Float
+//   warrantHolderReceived Float
+//   minerFee              Float
+//   platformFee           Float
+//   referralRevenue       Float
+//   createdAt             DateTime @default(now())
+//
+//   @@map("transactions")
+// }

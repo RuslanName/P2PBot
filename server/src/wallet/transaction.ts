@@ -3,12 +3,11 @@ import { TronWeb } from 'tronweb';
 import { ECPairFactory } from 'ecpair';
 import * as ecc from 'tiny-secp256k1';
 import axios from 'axios';
-import { Wallet } from '../types';
 import { config } from '../config/env';
 import { PrismaClient } from '@prisma/client';
-import { decrypt } from '../utils/crypto';
-import { getFeeRate, estimateTransactionSize } from './fees';
-import { getWalletBalance } from "./balance";
+import { decrypt } from '../utils/cryptoEncrypted';
+import { getFeeRate, estimateTransactionSize } from '../utils/calculateMinerFee';
+import { getWalletBalance } from './balance';
 
 const prisma = new PrismaClient();
 
@@ -33,56 +32,43 @@ const tronWeb = new TronWeb({
     headers: { 'TRON-PRO-API-KEY': config.TRONGRID_API_KEY || '' },
 });
 
-export function generateBTCWallet(): Wallet {
-    const network = bitcoin.networks.testnet;
-    const keyPair = ECPair.makeRandom({ network });
-    const pubkeyBuffer = Buffer.from(keyPair.publicKey);
-    const { address } = bitcoin.payments.p2wpkh({ pubkey: pubkeyBuffer, network });
-    return { address: address!, privateKey: keyPair.toWIF() };
-}
-
-export function generateLTCWallet(): Wallet {
-    const keyPair = ECPair.makeRandom({ network: litecoinNetwork });
-    const pubkeyBuffer = Buffer.from(keyPair.publicKey);
-    const { address } = bitcoin.payments.p2wpkh({ pubkey: pubkeyBuffer, network: litecoinNetwork });
-    return { address: address!, privateKey: keyPair.toWIF() };
-}
-
-export async function generateUSDTWallet(): Promise<Wallet> {
-    const wallet = await tronWeb.createAccount();
-    return { address: wallet.address.base58, privateKey: wallet.privateKey };
-}
-
 export async function sendP2PTransaction(
-    coin: string,
     amount: number,
-    senderId: string,
-    recipientId: string
+    coin: string,
+    senderId: number,
+    recipientAddress: string,
+    offerType: 'buy' | 'sell'
 ): Promise<string | undefined> {
     try {
-        const [sender, recipient] = await Promise.all([
-            prisma.user.findUnique({
-                where: { chatId: senderId },
-                include: { wallets: { where: { coin } } }
-            }),
-            prisma.user.findUnique({
-                where: { chatId: recipientId },
-                include: { wallets: { where: { coin } } }
-            })
-        ]);
+        const sender = await prisma.user.findUnique({
+            where: { id: senderId },
+            include: {
+                wallets: { where: { coin } },
+                referrer: { include: { wallets: { where: { coin } } } }
+            }
+        });
 
-        if (!sender || !recipient || !sender.wallets[0] || !recipient.wallets[0]) {
-            console.error('Sender or recipient wallet not found');
+        if (!sender || !sender.wallets[0]) {
+            console.error('Sender wallet not found');
             return undefined;
         }
 
-        const { confirmed } = await getWalletBalance(sender.wallets[0].address, coin, senderId);
-        if (confirmed < amount) {
+        const feePercent = offerType === 'buy'
+            ? config.PLATFORM_BUY_FEE_PERCENT
+            : config.PLATFORM_SELL_FEE_PERCENT;
+        const platformFeePercent = feePercent / 100;
+        const platformFee = amount * platformFeePercent;
+        const referralPercent = config.REFERRAL_REVENUE_PERCENT / 100;
+        const referralFee = platformFee * referralPercent;
+        const totalAmount = amount + platformFee;
+
+        const { confirmed, unconfirmed, held } = await getWalletBalance(senderId, coin);
+        if (confirmed - unconfirmed - held < totalAmount) {
             console.error('Insufficient confirmed funds in sender wallet');
             return undefined;
         }
 
-        return executeTransaction(coin, amount, sender.wallets[0], recipient.wallets[0].address);
+        return executeTransaction(coin, amount, sender.wallets[0], recipientAddress, platformFee, referralFee, sender.referrer?.wallets[0]?.address);
     } catch (error) {
         console.error('P2P transaction error:', error);
         return undefined;
@@ -90,28 +76,37 @@ export async function sendP2PTransaction(
 }
 
 export async function withdrawToExternalWallet(
-    coin: string,
     amount: number,
-    senderId: string,
+    coin: string,
+    senderId: number,
     externalAddress: string
 ): Promise<string | undefined> {
     try {
         const sender = await prisma.user.findUnique({
-            where: { chatId: senderId },
-            include: { wallets: { where: { coin } } }
+            where: { id: senderId },
+            include: {
+                wallets: { where: { coin } },
+                referrer: { include: { wallets: { where: { coin } } } }
+            }
         });
         if (!sender || !sender.wallets[0]) {
             console.error('Sender wallet not found');
             return undefined;
         }
 
-        const { confirmed } = await getWalletBalance(sender.wallets[0].address, coin, senderId);
-        if (confirmed < amount) {
+        const platformFeePercent = config.PLATFORM_WITHDRAW_FEE_PERCENT / 100;
+        const platformFee = amount * platformFeePercent;
+        const referralPercent = config.REFERRAL_REVENUE_PERCENT / 100;
+        const referralFee = platformFee * referralPercent;
+        const totalAmount = amount + platformFee;
+
+        const { confirmed, unconfirmed, held } = await getWalletBalance(senderId, coin);
+        if (confirmed - unconfirmed - held < totalAmount) {
             console.error('Insufficient confirmed funds in sender wallet');
             return undefined;
         }
 
-        return executeTransaction(coin, amount, sender.wallets[0], externalAddress);
+        return executeTransaction(coin, amount, sender.wallets[0], externalAddress, platformFee, referralFee, sender.referrer?.wallets[0]?.address);
     } catch (error) {
         console.error('Withdrawal error:', error);
         return undefined;
@@ -122,13 +117,12 @@ async function executeTransaction(
     coin: string,
     amount: number,
     senderWallet: any,
-    recipientAddress: string
+    recipientAddress: string,
+    platformFee: number,
+    referralFee: number,
+    referrerAddress?: string
 ): Promise<string | undefined> {
-    const platformFeePercent = config.PLATFORM_WITHDRAW_FEE_PERCENT / 100;
-    const platformFee = amount * platformFeePercent;
-    const recipientAmount = amount - platformFee;
     const platformWallet = config[`OWNER_${coin}_WALLET`];
-
     if (!platformWallet) {
         console.error(`Platform wallet for ${coin} not configured`);
         return undefined;
@@ -149,14 +143,12 @@ async function executeTransaction(
                 "type": "function"
             }
         ];
-        console.log(`Executing USDT transfer from ${senderWallet.address} to ${recipientAddress}, amount: ${recipientAmount}`);
+
         try {
             const hexRecipientAddress = tronWeb.address.toHex(recipientAddress);
             const hexPlatformWallet = tronWeb.address.toHex(platformWallet);
-            console.log(`Converted recipient address to hex: ${hexRecipientAddress}`);
-            console.log(`Converted platform wallet to hex: ${hexPlatformWallet}`);
             const contract = await tronWeb.contract(usdtABI).at(usdtContractAddress);
-            const amountWei = recipientAmount * 1e6;
+            const amountWei = amount * 1e6;
             const tx = await contract.transfer(hexRecipientAddress, amountWei).send({
                 from: senderWallet.address,
                 privateKey,
@@ -164,8 +156,16 @@ async function executeTransaction(
 
             if (platformFee > 0) {
                 const feeWei = platformFee * 1e6;
-                console.log(`Sending platform fee ${platformFee} USDT to ${platformWallet}`);
                 await contract.transfer(hexPlatformWallet, feeWei).send({
+                    from: senderWallet.address,
+                    privateKey,
+                });
+            }
+
+            if (referralFee > 0 && referrerAddress) {
+                const referralFeeWei = referralFee * 1e6;
+                const hexReferrerAddress = tronWeb.address.toHex(referrerAddress);
+                await contract.transfer(hexReferrerAddress, referralFeeWei).send({
                     from: senderWallet.address,
                     privateKey,
                 });
@@ -173,10 +173,9 @@ async function executeTransaction(
 
             await prisma.wallet.update({
                 where: { id: senderWallet.id },
-                data: { balance: { decrement: amount } }
+                data: { balance: { decrement: amount + platformFee + referralFee } }
             });
 
-            console.log(`USDT transaction successful, txid: ${tx}`);
             return tx;
         } catch (error: any) {
             console.error(`Error executing USDT transaction:`, {
@@ -206,7 +205,7 @@ async function executeTransaction(
 
         let selectedUtxos: any[] = [];
         let totalInputSat = 0;
-        const totalOutputSat = Math.round(amount * 1e8);
+        const totalOutputSat = Math.round((amount + platformFee + referralFee) * 1e8);
 
         for (const utxo of utxos) {
             selectedUtxos.push(utxo);
@@ -220,9 +219,13 @@ async function executeTransaction(
         }
 
         const outputs = [
-            { address: recipientAddress, value: Math.round(recipientAmount * 1e8) },
+            { address: recipientAddress, value: Math.round(amount * 1e8) },
             { address: platformWallet, value: Math.round(platformFee * 1e8) }
         ];
+
+        if (referralFee > 0 && referrerAddress) {
+            outputs.push({ address: referrerAddress, value: Math.round(referralFee * 1e8) });
+        }
 
         const estimatedSize = estimateTransactionSize(coin, selectedUtxos.length, outputs);
         const feeRate = await getFeeRate(coin, config.MINER_FEE);
@@ -247,9 +250,12 @@ async function executeTransaction(
             });
         }
 
-        psbt.addOutput({ address: recipientAddress, value: Math.round(recipientAmount * 1e8) });
+        psbt.addOutput({ address: recipientAddress, value: Math.round(amount * 1e8) });
         if (platformFee > 0) {
             psbt.addOutput({ address: platformWallet, value: Math.round(platformFee * 1e8) });
+        }
+        if (referralFee > 0 && referrerAddress) {
+            psbt.addOutput({ address: referrerAddress, value: Math.round(referralFee * 1e8) });
         }
         if (change > 0) {
             psbt.addOutput({ address: fromAddress, value: change });
@@ -268,7 +274,7 @@ async function executeTransaction(
 
         await prisma.wallet.update({
             where: { id: senderWallet.id },
-            data: { balance: { decrement: amount } }
+            data: { balance: { decrement: amount + platformFee + referralFee } }
         });
 
         return sendResponse.data.tx.hash;
