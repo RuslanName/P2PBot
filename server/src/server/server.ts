@@ -3,6 +3,7 @@ import cors from 'cors';
 import cookieParser from 'cookie-parser';
 import { config } from '../config/env';
 import { router } from './routes';
+import {startTasks} from "./tasks";
 
 export const app = express();
 
@@ -14,3 +15,5 @@ app.use(cors({
 app.use(cookieParser());
 
 app.use('/api', router);
+
+startTasks();

@@ -1,6 +1,6 @@
 import { BotState } from '../types';
 
-const stateStore: { [key: string]: any } = {};
+const stateStore: { [key: string]: BotState } = {};
 
 export async function getState(userId: string): Promise<BotState> {
     if (!stateStore[userId]) {
@@ -10,14 +10,9 @@ export async function getState(userId: string): Promise<BotState> {
 }
 
 export async function setState(userId: string, state: Partial<BotState>): Promise<void> {
-    if (!stateStore[userId]) {
-        stateStore[userId] = {};
-    }
     stateStore[userId] = { ...stateStore[userId], ...state };
 }
 
 export async function clearState(userId: string): Promise<void> {
-    if (stateStore[userId]) {
-        delete stateStore[userId];
-    }
+    delete stateStore[userId];
 }

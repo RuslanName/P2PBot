@@ -38,6 +38,7 @@ const UsersTable: React.FC = () => {
                     <th className="border p-2">Имя пользователя</th>
                     <th className="border p-2">ФИО</th>
                     <th className="border p-2">Кошельки</th>
+                    <th className="border p-2">Фиатная валюта</th>
                     <th className="border p-2">Реферер</th>
                     <th className="border p-2">Кол-во рефералов</th>
                     <th className="border p-2">Заблокирован</th>

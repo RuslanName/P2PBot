@@ -1,6 +1,6 @@
 import { Request, Response } from 'express';
 import * as services from './services';
-import { CreateOfferDto, UpdateOfferDto, UpdateWarrantHolderDto, UpdateUserDto } from '../types';
+import {CreateOfferDto, UpdateOfferDto, UpdateWarrantHolderDto, UpdateUserDto, UpdateDealDto} from '../types';
 
 export async function login(req: Request, res: Response) {
     const { username, password } = req.body;
@@ -67,6 +67,9 @@ export async function createOffer(req: Request, res: Response) {
     const token = req.cookies.token;
     const offerDto: CreateOfferDto = req.body;
     try {
+        if (offerDto.fiatCurrency.length !== offerDto.warrantHolderPaymentDetails.length) {
+            return res.status(400).json({ error: 'Количество реквизитов должно соответствовать количеству фиатных валют' });
+        }
         const offer = await services.createOffer(token, offerDto);
         res.json(offer);
     } catch (error: any) {
@@ -79,6 +82,10 @@ export async function updateOffer(req: Request, res: Response) {
     const { id } = req.params;
     const offerDto: UpdateOfferDto = req.body;
     try {
+        if (offerDto.fiatCurrency && offerDto.warrantHolderPaymentDetails &&
+            offerDto.fiatCurrency.length !== offerDto.warrantHolderPaymentDetails.length) {
+            return res.status(400).json({ error: 'Количество реквизитов должно соответствовать количеству фиатных валют' });
+        }
         const updatedOffer = await services.updateOffer(token, parseInt(id), offerDto);
         res.json(updatedOffer);
     } catch (error: any) {
@@ -101,6 +108,17 @@ export async function getDealsFiltered(req: Request, res: Response) {
         res.json(deals);
     } catch (error: any) {
         res.status(500).json({ error: 'Failed to fetch dealsTable' });
+    }
+}
+
+export async function updateDeal(req: Request, res: Response) {
+    const { id } = req.params;
+    const updateDto: UpdateDealDto = req.body;
+    try {
+        const updatedDeal = await services.updateDeal(parseInt(id), updateDto);
+        res.json(updatedDeal);
+    } catch (error: any) {
+        res.status(error.status || 500).json({ error: error.message });
     }
 }
 

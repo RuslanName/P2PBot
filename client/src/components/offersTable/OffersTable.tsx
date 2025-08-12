@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import axios from 'axios';
 import { useStore } from '../../store/store';
-import type { Offer } from '../../types';
+import type { Offer, CreateOfferDto } from '../../types';
 import CreateOfferForm from './CreateOfferForm';
 import OffersTableBody from './OffersTableBody';
 
@@ -27,7 +27,7 @@ const OffersTable: React.FC = () => {
     fetchData();
   }, []);
 
-  const handleCreateOffer = async (newOffer: Omit<Offer, 'id' | 'status' | 'warrantHolder' | 'userId'>) => {
+  const handleCreateOffer = async (newOffer: CreateOfferDto) => {
     setError('');
     if (!newOffer.fiatCurrency.length) {
       setError('Выберите хотя бы одну фиатную валюту');
@@ -110,7 +110,8 @@ const OffersTable: React.FC = () => {
             <th className="border p-2">Наценка (%)</th>
             <th className="border p-2">Реквизиты</th>
             {role === 'admin' && statusFilter === 'all' && <th className="border p-2">Статус</th>}
-            {role === 'admin' && <th className="border p-2">Гарант</th>}
+            {role === 'admin' && <th className="border p-2">Ордеродержатель</th>}
+            <th className="border p-2">Создано</th>
             {(role !== 'admin' || statusFilter === 'open' || statusFilter === 'all') && (
                 <th className="border p-2">Действия</th>
             )}

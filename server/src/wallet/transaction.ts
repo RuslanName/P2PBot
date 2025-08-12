@@ -1,36 +1,57 @@
-import * as bitcoin from 'bitcoinjs-lib';
+import { config } from '../config/env';
 import { TronWeb } from 'tronweb';
+import axios from 'axios';
+import * as bitcoin from 'bitcoinjs-lib';
 import { ECPairFactory } from 'ecpair';
 import * as ecc from 'tiny-secp256k1';
-import axios from 'axios';
-import { config } from '../config/env';
 import { PrismaClient } from '@prisma/client';
 import { decrypt } from '../utils/cryptoEncrypted';
-import { getFeeRate, estimateTransactionSize } from '../utils/calculateMinerFee';
+import { getCryptoPrice } from '../utils/cryptoPrice';
 import { getWalletBalance } from './balance';
+import {estimateNetworkFee} from "../utils/calculateTransaction";
 
 const prisma = new PrismaClient();
-
 const ECPair = ECPairFactory(ecc);
 
 const litecoinNetwork = {
     messagePrefix: '\x19Litecoin Signed Message:\n',
-    bech32: 'tltc',
-    bip32: { public: 0x0436ef7d, private: 0x0436ef7d },
-    pubKeyHash: 0x6f,
-    scriptHash: 0x3a,
-    wif: 0xef,
+    bech32: 'ltc',
+    bip32: { public: 0x0488b21e, private: 0x0488ade4 },
+    pubKeyHash: 0x30,
+    scriptHash: 0x32,
+    wif: 0xb0,
 };
 
 const blockcypherApi = axios.create({
-    baseURL: 'https://api.blockcypher.com/v1',
+    baseURL: `https://api.blockcypher.com/v1`,
     params: { token: config.BLOCKCYPHER_API_KEY },
 });
 
 const tronWeb = new TronWeb({
-    fullHost: 'https://api.shasta.trongrid.io',
-    headers: { 'TRON-PRO-API-KEY': config.TRONGRID_API_KEY || '' },
+    fullHost: config.NETWORK === 'main' ? 'https://api.trongrid.io' : 'https://api.shasta.trongrid.io',
+    headers: { 'TRON-PRO-API-KEY': config.TRONGRID_API_KEY },
+    privateKey: config.OWNER_TRX_PRIVATE_KEY
 });
+
+const trc20ABI = [
+    {
+        "constant": true,
+        "inputs": [{ "name": "owner", "type": "address" }],
+        "name": "balanceOf",
+        "outputs": [{ "name": "", "type": "uint256" }],
+        "type": "function"
+    },
+    {
+        "constant": false,
+        "inputs": [
+            { "name": "_to", "type": "address" },
+            { "name": "_value", "type": "uint256" }
+        ],
+        "name": "transfer",
+        "outputs": [{ "name": "", "type": "bool" }],
+        "type": "function"
+    }
+];
 
 export async function sendP2PTransaction(
     amount: number,
@@ -62,7 +83,7 @@ export async function sendP2PTransaction(
         const referralFee = platformFee * referralPercent;
         const totalAmount = amount + platformFee;
 
-        const { confirmed, unconfirmed, held } = await getWalletBalance(senderId, coin);
+        const { confirmed, unconfirmed, held } = await getWalletBalance(senderId, coin, true);
         if (confirmed - unconfirmed - held < totalAmount) {
             console.error('Insufficient confirmed funds in sender wallet');
             return undefined;
@@ -100,8 +121,8 @@ export async function withdrawToExternalWallet(
         const referralFee = platformFee * referralPercent;
         const totalAmount = amount + platformFee;
 
-        const { confirmed, unconfirmed, held } = await getWalletBalance(senderId, coin);
-        if (confirmed - unconfirmed - held < totalAmount) {
+        const { confirmed, unconfirmed, held } = await getWalletBalance(senderId, coin, true);
+        if (confirmed - unconfirmed - held + amount < totalAmount) {
             console.error('Insufficient confirmed funds in sender wallet');
             return undefined;
         }
@@ -129,70 +150,71 @@ async function executeTransaction(
     }
 
     if (coin === 'USDT') {
+        const fromAddress = senderWallet.address;
         const privateKey = decrypt(senderWallet.privateKey);
-        const usdtContractAddress = 'TR7NHqjeKQxGTCi8q8ZY4pL8otSzgjLj6t';
-        const usdtABI = [
-            {
-                "constant": false,
-                "inputs": [
-                    { "name": "_to", "type": "address" },
-                    { "name": "_value", "type": "uint256" }
-                ],
-                "name": "transfer",
-                "outputs": [{ "name": "success", "type": "bool" }],
-                "type": "function"
-            }
-        ];
+        tronWeb.setPrivateKey(privateKey);
 
-        try {
-            const hexRecipientAddress = tronWeb.address.toHex(recipientAddress);
-            const hexPlatformWallet = tronWeb.address.toHex(platformWallet);
-            const contract = await tronWeb.contract(usdtABI).at(usdtContractAddress);
-            const amountWei = amount * 1e6;
-            const tx = await contract.transfer(hexRecipientAddress, amountWei).send({
-                from: senderWallet.address,
-                privateKey,
-            });
+        const requiredTrx = await estimateNetworkFee(coin, config.MINER_FEE, 1, [{ address: recipientAddress, value: amount }]);
+        const trxBalance = await tronWeb.trx.getBalance(fromAddress) / 1e6;
+        const platformTrxWallet = config.OWNER_TRX_WALLET;
+        const platformTrxPrivateKey = config.OWNER_TRX_PRIVATE_KEY;
 
-            if (platformFee > 0) {
-                const feeWei = platformFee * 1e6;
-                await contract.transfer(hexPlatformWallet, feeWei).send({
-                    from: senderWallet.address,
-                    privateKey,
-                });
+        if (trxBalance < requiredTrx) {
+            const trxToSend = requiredTrx - trxBalance;
+            const usdtPrice = await getCryptoPrice('USDT', 1, 'USD');
+            const usdtEquivalent = (trxToSend * (await getCryptoPrice('TRX', 1, 'USD'))) / usdtPrice;
+
+            const usdtContractAddress = config.NETWORK === 'main'
+                ? 'TR7NHqjeKQxGTCi8q8ZY4pL8otSzgjLj6t'
+                : 'TG3XXyExBkPp9nzdajDZsozEu4BkaSJozs';
+            const contract = await tronWeb.contract(trc20ABI).at(usdtContractAddress);
+            const usdtBalance = Number(await contract.balanceOf(fromAddress).call()) / 1e6;
+            if (usdtBalance < usdtEquivalent + amount + platformFee + referralFee) {
+                console.error('Insufficient USDT balance for TRX top-up and transaction');
+                return undefined;
             }
 
-            if (referralFee > 0 && referrerAddress) {
-                const referralFeeWei = referralFee * 1e6;
-                const hexReferrerAddress = tronWeb.address.toHex(referrerAddress);
-                await contract.transfer(hexReferrerAddress, referralFeeWei).send({
-                    from: senderWallet.address,
-                    privateKey,
-                });
-            }
+            tronWeb.setPrivateKey(platformTrxPrivateKey);
+            const transaction = await tronWeb.transactionBuilder.sendTrx(fromAddress, trxToSend * 1e6, platformTrxWallet);
+            const signedTx = await tronWeb.trx.sign(transaction, platformTrxPrivateKey);
+            await tronWeb.trx.sendRawTransaction(signedTx);
 
-            await prisma.wallet.update({
-                where: { id: senderWallet.id },
-                data: { balance: { decrement: amount + platformFee + referralFee } }
-            });
-
-            return tx;
-        } catch (error: any) {
-            console.error(`Error executing USDT transaction:`, {
-                message: error.message,
-                stack: error.stack,
-                code: error.code,
-                response: error.response ? error.response.data : null
-            });
-            throw error;
+            tronWeb.setPrivateKey(privateKey);
+            await contract.transfer(platformWallet, usdtEquivalent * 1e6).send({ from: fromAddress, feeLimit: 10000000 });
         }
+
+        const usdtContractAddress = config.NETWORK === 'main'
+            ? 'TR7NHqjeKQxGTCi8q8ZY4pL8otSzgjLj6t'
+            : 'TG3XXyExBkPp9nzdajDZsozEu4BkaSJozs';
+        const contract = await tronWeb.contract(trc20ABI).at(usdtContractAddress);
+        const decimals = 1e6;
+        const formattedAmount = amount * decimals;
+
+        const outputs = [
+            { address: recipientAddress, value: formattedAmount },
+            { address: platformWallet, value: Math.round((platformFee - referralFee) * decimals) }
+        ];
+        if (referralFee > 0 && referrerAddress) {
+            outputs.push({ address: referrerAddress, value: Math.round(referralFee * decimals) });
+        }
+
+        const result = await contract.transfer(recipientAddress, formattedAmount).send({ from: fromAddress, feeLimit: 10000000 });
+
+        if (platformFee > 0) {
+            await contract.transfer(platformWallet, Math.round((platformFee - referralFee) * decimals)).send({ from: fromAddress, feeLimit: 10000000 });
+        }
+        if (referralFee > 0 && referrerAddress) {
+            await contract.transfer(referrerAddress, Math.round(referralFee * decimals)).send({ from: fromAddress, feeLimit: 10000000 });
+        }
+
+        return result;
     } else {
-        const network = coin === 'BTC' ? bitcoin.networks.testnet : litecoinNetwork;
+        const network = coin === 'BTC' ? (config.NETWORK === 'main' ? bitcoin.networks.bitcoin : bitcoin.networks.testnet) : litecoinNetwork;
         const privateKey = decrypt(senderWallet.privateKey);
         const fromAddress = senderWallet.address;
         const keyPair = ECPair.fromWIF(privateKey, network);
 
-        const chain = coin === 'BTC' ? 'btc/test3' : 'ltc/testnet';
+        const chain = coin === 'BTC' ? (config.NETWORK === 'main' ? 'btc/main' : 'btc/test3') : 'ltc/main';
         const utxoResponse = await blockcypherApi.get(`/${chain}/addrs/${fromAddress}?unspentOnly=true`);
         const utxos = utxoResponse.data.txrefs || [];
 
@@ -205,7 +227,18 @@ async function executeTransaction(
 
         let selectedUtxos: any[] = [];
         let totalInputSat = 0;
-        const totalOutputSat = Math.round((amount + platformFee + referralFee) * 1e8);
+
+        const outputs = [
+            { address: recipientAddress, value: Math.round(amount * 1e8) },
+            { address: platformWallet, value: Math.round((platformFee - referralFee) * 1e8) }
+        ];
+
+        if (referralFee > 0 && referrerAddress) {
+            outputs.push({ address: referrerAddress, value: Math.round(referralFee * 1e8) });
+        }
+
+        const feeRate = await estimateNetworkFee(coin, config.MINER_FEE, selectedUtxos.length, outputs);
+        const totalOutputSat = Math.round((amount + platformFee) * 1e8);
 
         for (const utxo of utxos) {
             selectedUtxos.push(utxo);
@@ -218,25 +251,12 @@ async function executeTransaction(
             return undefined;
         }
 
-        const outputs = [
-            { address: recipientAddress, value: Math.round(amount * 1e8) },
-            { address: platformWallet, value: Math.round(platformFee * 1e8) }
-        ];
+        const change = totalInputSat - totalOutputSat - Math.ceil(feeRate * 1e8);
 
-        if (referralFee > 0 && referrerAddress) {
-            outputs.push({ address: referrerAddress, value: Math.round(referralFee * 1e8) });
-        }
-
-        const estimatedSize = estimateTransactionSize(coin, selectedUtxos.length, outputs);
-        const feeRate = await getFeeRate(coin, config.MINER_FEE);
-        const minerFee = Math.ceil(estimatedSize * feeRate);
-
-        if (totalInputSat < totalOutputSat + minerFee) {
+        if (totalInputSat < totalOutputSat + Math.ceil(feeRate * 1e8)) {
             console.error('Insufficient funds including fee');
             return undefined;
         }
-
-        const change = totalInputSat - totalOutputSat - minerFee;
 
         const psbt = new bitcoin.Psbt({ network });
 
@@ -271,11 +291,6 @@ async function executeTransaction(
         psbt.finalizeAllInputs();
         const tx = psbt.extractTransaction();
         const sendResponse = await blockcypherApi.post(`/${chain}/txs/push`, { tx: tx.toHex() });
-
-        await prisma.wallet.update({
-            where: { id: senderWallet.id },
-            data: { balance: { decrement: amount + platformFee + referralFee } }
-        });
 
         return sendResponse.data.tx.hash;
     }

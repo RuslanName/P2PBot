@@ -50,7 +50,14 @@ bot.on('text', async (ctx) => {
     const state = ctx.state;
     if (state.action?.startsWith('withdraw')) {
         await handleWithdrawText(ctx);
-    } else if (state.action?.startsWith('buy_amount') || state.action?.startsWith('sell_amount') || state.action === 'buy_wallet_address' || state.action === 'sell_payment_details') {
+    } else if (
+        state.action?.startsWith('buy_amount') ||
+        state.action?.startsWith('sell_amount') ||
+        state.action === 'buy_wallet_address' ||
+        state.action === 'sell_payment_details' ||
+        state.action === 'chat_to_warrant' ||
+        state.action === 'chat_to_client'
+    ) {
         await handleDealsText(ctx);
     } else {
         await ctx.reply('Пожалуйста, выберите действие из меню.');

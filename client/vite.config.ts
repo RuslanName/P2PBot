@@ -10,6 +10,6 @@ export default defineConfig({
         changeOrigin: true,
       },
     },
-    allowedHosts: ['localhost', '127.0.0.1', '71ec14145b9a.ngrok-free.app'],
+    allowedHosts: ['localhost', '127.0.0.1'],
   },
 });

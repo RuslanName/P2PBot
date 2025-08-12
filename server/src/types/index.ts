@@ -1,13 +1,19 @@
 export interface BotState {
+    action?: string;
+    captcha?: {
+        correctAnswer: number;
+        attempts: number;
+        maxAttempts: number;
+    };
+    startPayload?: string;
     offerId?: number;
     dealId?: number;
-    action?: string;
+    page?: number;
     coin?: string;
     fiatCurrency?: string;
     amount?: number;
-    withdrawAmount?: number;
-    page?: number;
     paymentDetails?: string;
+    withdrawAmount?: number;
 }
 
 export interface CreateOfferDto {
@@ -17,7 +23,7 @@ export interface CreateOfferDto {
     minDealAmount: number;
     maxDealAmount: number;
     markupPercent: number;
-    warrantHolderPaymentDetails: string;
+    warrantHolderPaymentDetails: string[];
 }
 
 export interface UpdateOfferDto {
@@ -25,7 +31,11 @@ export interface UpdateOfferDto {
     minDealAmount?: number;
     maxDealAmount?: number;
     markupPercent?: number;
-    warrantHolderPaymentDetails?: string;
+    warrantHolderPaymentDetails?: string[];
+    status?: string;
+}
+
+export interface UpdateDealDto {
     status?: string;
 }
 

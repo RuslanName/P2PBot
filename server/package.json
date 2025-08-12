@@ -24,6 +24,7 @@
     "jsonwebtoken": "^9.0.2",
     "monero-javascript": "^0.8.4",
     "monero-ts": "^0.11.5",
+    "node-cron": "^4.2.1",
     "telegraf": "^4.16.3",
     "tiny-secp256k1": "^2.2.4",
     "tronweb": "^6.0.3",

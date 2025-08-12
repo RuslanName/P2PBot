@@ -1,7 +1,7 @@
 import { Tooltip } from '../Tooltip';
-import type { DealsTableBodyProps } from "../../types";
+import type { DealsTableBodyProps } from '../../types';
 
-const DealsTableBody: React.FC<DealsTableBodyProps> = ({ deals, role, statusFilter }) => {
+const DealsTableBody: React.FC<DealsTableBodyProps> = ({ deals, role, statusFilter, onComplete }) => {
     const getStatusName = (status: string) => {
         const statusMap: Record<string, string> = {
             open: 'Открыт',
@@ -10,12 +10,26 @@ const DealsTableBody: React.FC<DealsTableBodyProps> = ({ deals, role, statusFilt
             closed: 'Закрыт',
             cancelled: 'Отменен',
             blocked: 'Заблокирован',
+            expired: 'Просрочен'
         };
         return statusMap[status] || status;
     };
 
     const getTypeName = (type: string) => {
         return type === 'buy' ? 'Покупка' : 'Продажа';
+    };
+
+    const formatCreatedAt = (date: string) => {
+        const createdDate = new Date(date);
+        createdDate.setHours(createdDate.getHours() + 3);
+        return createdDate.toLocaleString('ru-RU', {
+            day: '2-digit',
+            month: '2-digit',
+            year: 'numeric',
+            hour: '2-digit',
+            minute: '2-digit',
+            hour12: false
+        }).replace(',', '');
     };
 
     return (
@@ -58,7 +72,7 @@ const DealsTableBody: React.FC<DealsTableBodyProps> = ({ deals, role, statusFilt
                         </Tooltip>
                     ) : (
                         <div className="bg-gray-100 px-2 py-1 rounded text-red-500">
-                            Гарант не найден
+                            Ордеродержатель не найден
                         </div>
                     )}
                 </td>
@@ -81,8 +95,19 @@ const DealsTableBody: React.FC<DealsTableBodyProps> = ({ deals, role, statusFilt
                 <td className="border p-2">{deal.clientPaymentDetails || 'Не указаны'}</td>
                 <td className="border p-2">{deal.txId || 'Не указан'}</td>
                 <td className="border p-2">{deal.clientConfirmed ? 'Да' : 'Нет'}</td>
+                <td className="border p-2">{formatCreatedAt(deal.createdAt)}</td>
                 {role === 'admin' && statusFilter === 'all' && (
                     <td className="border p-2">{getStatusName(deal.status)}</td>
+                )}
+                {role === 'admin' && (statusFilter === 'blocked' || statusFilter === 'all') && deal.status === 'blocked' && (
+                    <td className="border p-2">
+                        <button
+                            onClick={() => onComplete(deal.id)}
+                            className="px-2 py-1 rounded text-white bg-red-500 hover:bg-red-600"
+                        >
+                            Завершить
+                        </button>
+                    </td>
                 )}
             </tr>
         ))}

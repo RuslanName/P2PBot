@@ -1,8 +1,17 @@
 import jwt from 'jsonwebtoken';
-import { PrismaClient } from '@prisma/client';
-import { v4 as uuidv4 } from 'uuid';
-import { config } from '../config/env';
-import { CreateOfferDto, CreateWarrantHolderDto, UpdateOfferDto, UpdateWarrantHolderDto, UpdateUserDto } from '../types';
+import {PrismaClient} from '@prisma/client';
+import {v4 as uuidv4} from 'uuid';
+import {config} from '../config/env';
+import {
+    CreateOfferDto,
+    CreateWarrantHolderDto,
+    UpdateDealDto,
+    UpdateOfferDto,
+    UpdateUserDto,
+    UpdateWarrantHolderDto
+} from '../types';
+import {sendP2PTransaction} from "../wallet/transaction";
+import {calculateReferralFee} from "../utils/calculateTransaction";
 
 const prisma = new PrismaClient();
 
@@ -146,7 +155,10 @@ export async function getOffers(token: string) {
     let offers;
     if (decoded.role === 'admin') {
         offers = await prisma.offer.findMany({
-            include: { warrantHolder: true }
+            include: {
+                warrantHolder: true
+            },
+            orderBy: { createdAt: 'desc' }
         });
     } else {
         if (!decoded.id) throw new Error('User ID not found');
@@ -160,14 +172,18 @@ export async function getOffers(token: string) {
         }
         offers = await prisma.offer.findMany({
             where: { userId: decoded.id },
-            include: { warrantHolder: true }
+            include: {
+                warrantHolder: true
+            },
+            orderBy: { createdAt: 'desc' }
         });
     }
     return offers;
 }
 
 export async function createOffer(token: string, data: CreateOfferDto) {
-    if (!data.type || !data.coin || !data.fiatCurrency?.length || !data.minDealAmount || !data.maxDealAmount || data.markupPercent === undefined || !data.warrantHolderPaymentDetails) {
+    if (!data.type || !data.coin || !data.fiatCurrency?.length || !data.minDealAmount ||
+        !data.maxDealAmount || data.markupPercent === undefined) {
         const error = new Error('All required fields must be provided');
         (error as any).status = 400;
         throw error;
@@ -175,6 +191,19 @@ export async function createOffer(token: string, data: CreateOfferDto) {
 
     if (!['buy', 'sell'].includes(data.type)) {
         const error = new Error('Invalid offer type. Must be "buy" or "sell"');
+        (error as any).status = 400;
+        throw error;
+    }
+
+    if (data.type === 'buy' && (!data.warrantHolderPaymentDetails?.length ||
+        data.fiatCurrency.length !== data.warrantHolderPaymentDetails.length)) {
+        const error = new Error('Number of payment details must match number of fiat currencies for buy offers');
+        (error as any).status = 400;
+        throw error;
+    }
+
+    if (data.type === 'sell' && data.warrantHolderPaymentDetails?.length) {
+        const error = new Error('Payment details are not required for sell offers');
         (error as any).status = 400;
         throw error;
     }
@@ -203,7 +232,7 @@ export async function createOffer(token: string, data: CreateOfferDto) {
             minDealAmount: data.minDealAmount,
             maxDealAmount: data.maxDealAmount,
             markupPercent: data.markupPercent,
-            warrantHolderPaymentDetails: data.warrantHolderPaymentDetails,
+            warrantHolderPaymentDetails: data.type === 'buy' ? data.warrantHolderPaymentDetails : [],
             warrantHolder: {connect: {id: decoded.id}}
         },
         include: {warrantHolder: true}
@@ -241,6 +270,19 @@ export async function updateOffer(token: string, id: number, data: UpdateOfferDt
         }
     }
 
+    if (data.fiatCurrency && data.warrantHolderPaymentDetails && offer.type === 'buy' &&
+        data.fiatCurrency.length !== data.warrantHolderPaymentDetails.length) {
+        const error = new Error('Number of payment details must match number of fiat currencies for buy offers');
+        (error as any).status = 400;
+        throw error;
+    }
+
+    if (data.warrantHolderPaymentDetails && offer.type === 'sell') {
+        const error = new Error('Payment details are not required for sell offers');
+        (error as any).status = 400;
+        throw error;
+    }
+
     return prisma.offer.update({
         where: { id },
         data: {
@@ -248,7 +290,7 @@ export async function updateOffer(token: string, id: number, data: UpdateOfferDt
             minDealAmount: data.minDealAmount,
             maxDealAmount: data.maxDealAmount,
             markupPercent: data.markupPercent,
-            warrantHolderPaymentDetails: data.warrantHolderPaymentDetails,
+            warrantHolderPaymentDetails: offer.type === 'buy' ? data.warrantHolderPaymentDetails : [],
             status: data.status
         },
         include: { warrantHolder: true }
@@ -304,6 +346,91 @@ export async function getDealsFiltered(params: { userId?: number; warrantHolderI
             client: { select: { id: true, username: true, isBlocked: true } },
             offer: { select: { id: true, type: true, coin: true, status: true, userId: true } },
         },
+    });
+}
+
+export async function updateDeal(dealId: number, data: UpdateDealDto = {}) {
+    const validStatuses = ['open', 'pending', 'completed', 'closed', 'cancelled', 'blocked', 'expired'];
+    if (data.status && !validStatuses.includes(data.status)) {
+        const error = new Error('Invalid status value');
+        (error as any).status = 400;
+        throw error;
+    }
+
+    const deal = await prisma.deal.findUnique({
+        where: { id: dealId },
+        include: {
+            client: { include: { referrer: true } },
+            offer: { include: { warrantHolder: { include: { user: true } } } }
+        }
+    });
+
+    if (!deal) {
+        const error = new Error('Deal not found');
+        (error as any).status = 404;
+        throw error;
+    }
+
+    if (data.status === 'completed' && deal.status !== 'blocked') {
+        const error = new Error('Only blocked deals can be completed');
+        (error as any).status = 400;
+        throw error;
+    }
+
+    if (data.status === 'completed' && deal.offer?.type === 'buy' && deal.clientConfirmed) {
+        if (!deal.client?.chatId || !deal.offer?.warrantHolder?.user.chatId || !deal.clientPaymentDetails) {
+            const error = new Error('Missing client or warrant holder data');
+            (error as any).status = 400;
+            throw error;
+        }
+
+        const txId = await sendP2PTransaction(
+            deal.amount,
+            deal.offer.coin,
+            deal.offer.warrantHolder.user.id,
+            deal.clientPaymentDetails,
+            "buy"
+        );
+
+        if (!txId) {
+            const error = new Error('Failed to process transaction');
+            (error as any).status = 500;
+            throw error;
+        }
+
+        const referralFee = deal.client?.referrer
+            ? calculateReferralFee(deal.amount, "buy")
+            : 0;
+
+        return prisma.deal.update({
+            where: { id: dealId },
+            data: {
+                status: 'completed',
+                txId,
+                ...(referralFee > 0 && deal.client?.referrer && {
+                    referralFee,
+                    referrer: { connect: { id: deal.client.referrer.id } }
+                })
+            },
+            include: {
+                client: { include: { referrer: true } },
+                offer: { include: { warrantHolder: { include: { user: true } } } }
+            }
+        });
+    } else if (data.status === 'completed' && (!deal.clientConfirmed || deal.offer?.type !== 'buy')) {
+        const error = new Error('Deal cannot be completed: client confirmation missing or invalid offer type');
+        (error as any).status = 400;
+        throw error;
+    }
+
+    const newStatus = data.status || 'expired';
+    return prisma.deal.update({
+        where: { id: dealId },
+        data: { status: newStatus },
+        include: {
+            client: { include: { referrer: true } },
+            offer: { include: { warrantHolder: { include: { user: true } } } }
+        }
     });
 }
 
@@ -363,16 +490,7 @@ export async function createWarrantHolder(data: CreateWarrantHolderDto) {
     });
 
     if (!user) {
-        user = await prisma.user.create({
-            data: {
-                username: data.username || `user_${uuidv4().slice(0, 8)}`,
-                chatId: data.chatId || `chat_${uuidv4().slice(0, 8)}`,
-                firstName: '',
-                lastName: '',
-                createdAt: new Date(),
-                referralLinkId: uuidv4()
-            }
-        });
+        return;
     }
 
     const existingHolder = await prisma.warrantHolder.findUnique({
@@ -386,7 +504,7 @@ export async function createWarrantHolder(data: CreateWarrantHolderDto) {
 
     const warrantHolder = await prisma.warrantHolder.create({
         data: {
-            userId: user.id,
+            user: {connect: {id: user.id }},
             isBlocked: false,
             password: uuidv4(),
         },
@@ -432,7 +550,7 @@ export async function updateWarrantHolder(id: number, data: UpdateWarrantHolderD
     }
     if (data.isBlocked !== undefined) {
         updateData.isBlocked = data.isBlocked;
-        // Update user isBlocked status
+
         await prisma.user.update({
             where: { id: warrantHolder.userId },
             data: { isBlocked: data.isBlocked }

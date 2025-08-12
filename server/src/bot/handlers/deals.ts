@@ -4,6 +4,7 @@ import {BotContext} from '../bot';
 import {clearState, getState, setState} from '../state';
 import {calculateClientTransaction, calculateReferralFee} from '../../utils/calculateTransaction';
 import {sendP2PTransaction} from "../../wallet/transaction";
+import {config} from "../../config/env";
 
 const prisma = new PrismaClient();
 
@@ -22,7 +23,6 @@ export function handleDeals(bot: Telegraf<BotContext>) {
             ],
             [
                 Markup.button.callback('USDT', 'buy_USDT'),
-                Markup.button.callback('XMR', 'buy_XMR'),
             ],
             [Markup.button.callback('Отменить', 'cancel')],
         ]));
@@ -36,77 +36,28 @@ export function handleDeals(bot: Telegraf<BotContext>) {
             ],
             [
                 Markup.button.callback('USDT', 'sell_USDT'),
-                Markup.button.callback('XMR', 'sell_XMR'),
             ],
             [Markup.button.callback('Отменить', 'cancel')],
         ]));
     });
 
-    bot.action(/buy_(BTC|LTC|USDT|XMR)/, async (ctx) => {
+    bot.action(/buy_(BTC|LTC|USDT)/, async (ctx) => {
         const coin = ctx.match[1];
         if (!ctx.from?.id) return;
 
         const userId = ctx.from.id.toString();
-        await setState(userId, { coin, action: 'buy_fiat' });
+        const user = await prisma.user.findUnique({ where: { chatId: userId } });
+        if (!user?.fiatCurrency) return;
 
-        await ctx.editMessageText('Какую фиатную валюту хотите обменять?', Markup.inlineKeyboard([
-            [
-                Markup.button.callback('RUB', 'buy_fiat_RUB'),
-                Markup.button.callback('UAH', 'buy_fiat_UAH'),
-            ],
-            [
-                Markup.button.callback('KZT', 'buy_fiat_KZT'),
-                Markup.button.callback('BYN', 'buy_fiat_BYN'),
-            ],
-            [
-                Markup.button.callback('USD', 'buy_fiat_USD'),
-                Markup.button.callback('EUR', 'buy_fiat_EUR'),
-            ],
-            [Markup.button.callback('Отменить', 'cancel')],
-        ]));
-    });
-
-    bot.action(/sell_(BTC|LTC|USDT|XMR)/, async (ctx) => {
-        const coin = ctx.match[1];
-        if (!ctx.from?.id) return;
-
-        const userId = ctx.from.id.toString();
-        await setState(userId, { coin, action: 'sell_fiat' });
-
-        await ctx.editMessageText('Какую фиатную валюту хотите получить?', Markup.inlineKeyboard([
-            [
-                Markup.button.callback('RUB', 'sell_fiat_RUB'),
-                Markup.button.callback('UAH', 'sell_fiat_UAH'),
-            ],
-            [
-                Markup.button.callback('KZT', 'sell_fiat_KZT'),
-                Markup.button.callback('BYN', 'sell_fiat_BYN'),
-            ],
-            [
-                Markup.button.callback('USD', 'sell_fiat_USD'),
-                Markup.button.callback('EUR', 'sell_fiat_EUR'),
-            ],
-            [Markup.button.callback('Отменить', 'cancel')],
-        ]));
-    });
-
-    bot.action(/buy_fiat_(RUB|UAH|KZT|BYN|USD|EUR)/, async (ctx) => {
-        const fiatCurrency = ctx.match[1];
-        if (!ctx.from?.id) return;
-
-        const userId = ctx.from.id.toString();
-        const state = await getState(userId);
-        if (!state.coin) return;
-
-        await setState(userId, { fiatCurrency, page: 0 });
+        await setState(userId, { coin, action: 'buy', fiatCurrency: user.fiatCurrency, page: 0 });
 
         const pageSize = 5;
         const skip = 0;
         const offers = await prisma.offer.findMany({
             where: {
-                coin: state.coin,
+                coin: coin,
                 type: 'buy',
-                fiatCurrency: { has: fiatCurrency },
+                fiatCurrency: { has: user.fiatCurrency },
                 status: 'open'
             },
             take: pageSize,
@@ -116,16 +67,16 @@ export function handleDeals(bot: Telegraf<BotContext>) {
 
         const totalOffers = await prisma.offer.count({
             where: {
-                coin: state.coin,
+                coin: coin,
                 type: 'buy',
-                fiatCurrency: { has: fiatCurrency },
+                fiatCurrency: { has: user.fiatCurrency },
                 status: 'open'
             },
         });
 
         const buttons = offers.map((offer) => [
             Markup.button.callback(
-                `${offer.warrantHolder.user.username || 'Неизвестно'}: ${offer.minDealAmount}-${offer.maxDealAmount} ${state.coin} (${offer.markupPercent}%)`,
+                `${offer.warrantHolder.user.username || 'Неизвестно'}: ${offer.minDealAmount} - ${offer.maxDealAmount} ${coin}`,
                 `select_buy_${offer.id}`
             ),
         ]);
@@ -137,23 +88,23 @@ export function handleDeals(bot: Telegraf<BotContext>) {
         await ctx.editMessageText('Выберите подходящую оферту', Markup.inlineKeyboard(buttons));
     });
 
-    bot.action(/sell_fiat_(RUB|UAH|KZT|BYN|USD|EUR)/, async (ctx) => {
-        const fiatCurrency = ctx.match[1];
+    bot.action(/sell_(BTC|LTC|USDT)/, async (ctx) => {
+        const coin = ctx.match[1];
         if (!ctx.from?.id) return;
 
         const userId = ctx.from.id.toString();
-        const state = await getState(userId);
-        if (!state.coin) return;
+        const user = await prisma.user.findUnique({ where: { chatId: userId } });
+        if (!user?.fiatCurrency) return;
 
-        await setState(userId, { fiatCurrency, page: 0 });
+        await setState(userId, { coin, action: 'sell', fiatCurrency: user.fiatCurrency, page: 0 });
 
         const pageSize = 5;
         const skip = 0;
         const offers = await prisma.offer.findMany({
             where: {
-                coin: state.coin,
+                coin: coin,
                 type: 'sell',
-                fiatCurrency: { has: fiatCurrency },
+                fiatCurrency: { has: user.fiatCurrency },
                 status: 'open'
             },
             take: pageSize,
@@ -163,16 +114,16 @@ export function handleDeals(bot: Telegraf<BotContext>) {
 
         const totalOffers = await prisma.offer.count({
             where: {
-                coin: state.coin,
+                coin: coin,
                 type: 'sell',
-                fiatCurrency: { has: fiatCurrency },
+                fiatCurrency: { has: user.fiatCurrency },
                 status: 'open'
             },
         });
 
         const buttons = offers.map((offer) => [
             Markup.button.callback(
-                `${offer.warrantHolder.user.username || 'Неизвестно'}: ${offer.minDealAmount}-${offer.maxDealAmount} ${state.coin} (${offer.markupPercent}%)`,
+                `${offer.warrantHolder.user.username || 'Неизвестно'}: ${offer.minDealAmount} - ${offer.maxDealAmount} ${coin}`,
                 `select_sell_${offer.id}`
             ),
         ]);
@@ -220,7 +171,7 @@ export function handleDeals(bot: Telegraf<BotContext>) {
 
         const buttons = offers.map((offer) => [
             Markup.button.callback(
-                `${offer.warrantHolder.user.username || 'Неизвестно'}: ${offer.minDealAmount}-${offer.maxDealAmount} ${state.coin} (${offer.markupPercent}%)`,
+                `${offer.warrantHolder.user.username || 'Неизвестно'}: ${offer.minDealAmount} - ${offer.maxDealAmount} ${state.coin}`,
                 `select_buy_${offer.id}`
             ),
         ]);
@@ -285,7 +236,7 @@ export function handleDeals(bot: Telegraf<BotContext>) {
 
         const buttons = offers.map((offer) => [
             Markup.button.callback(
-                `${offer.warrantHolder.user.username || 'Неизвестно'}: ${offer.minDealAmount}-${offer.maxDealAmount} ${state.coin} (${offer.markupPercent}%)`,
+                `${offer.warrantHolder.user.username || 'Неизвестно'}: ${offer.minDealAmount} - ${offer.maxDealAmount} ${state.coin}`,
                 `select_buy_${offer.id}`
             ),
         ]);
@@ -342,7 +293,7 @@ export function handleDeals(bot: Telegraf<BotContext>) {
 
         const buttons = offers.map((offer) => [
             Markup.button.callback(
-                `${offer.warrantHolder.user.username || 'Неизвестно'}: ${offer.minDealAmount}-${offer.maxDealAmount} ${offer.coin} (${offer.markupPercent}%)`,
+                `${offer.warrantHolder.user.username || 'Неизвестно'}: ${offer.minDealAmount} - ${offer.maxDealAmount} ${offer.coin}`,
                 `select_sell_${offer.id}`
             ),
         ]);
@@ -407,7 +358,7 @@ export function handleDeals(bot: Telegraf<BotContext>) {
 
         const buttons = offers.map((offer) => [
             Markup.button.callback(
-                `${offer.warrantHolder.user.username || 'Неизвестно'}: ${offer.minDealAmount}-${offer.maxDealAmount} ${offer.coin} (${offer.markupPercent}%)`,
+                `${offer.warrantHolder.user.username || 'Неизвестно'}: ${offer.minDealAmount} - ${offer.maxDealAmount} ${offer.coin}`,
                 `select_sell_${offer.id}`
             ),
         ]);
@@ -426,6 +377,42 @@ export function handleDeals(bot: Telegraf<BotContext>) {
         }
 
         await ctx.editMessageText('Выберите подходящую оферту', Markup.inlineKeyboard(buttons));
+    });
+
+    bot.action(/select_buy_(\d+)/, async (ctx) => {
+        if (!ctx.from?.id) return;
+        const offerId = parseInt(ctx.match[1], 10);
+        const userId = ctx.from.id.toString();
+        const state = await getState(userId);
+        if (!state.coin || !state.fiatCurrency) return;
+
+        const offer = await prisma.offer.findUnique({ where: { id: offerId } });
+        if (!offer) return;
+
+        await setState(userId, { offerId, action: 'buy_amount' });
+
+        await ctx.editMessageText(
+            `Введите сумму в ${state.coin}, которую хотите купить (${offer.minDealAmount} - ${offer.maxDealAmount} ${state.coin})`,
+            Markup.inlineKeyboard([[Markup.button.callback('Отменить', 'cancel')]])
+        );
+    });
+
+    bot.action(/select_sell_(\d+)/, async (ctx) => {
+        if (!ctx.from?.id) return;
+        const offerId = parseInt(ctx.match[1], 10);
+        const userId = ctx.from.id.toString();
+        const state = await getState(userId);
+        if (!state.coin || !state.fiatCurrency) return;
+
+        const offer = await prisma.offer.findUnique({ where: { id: offerId } });
+        if (!offer) return;
+
+        await setState(userId, { offerId, action: 'sell_amount' });
+
+        await ctx.editMessageText(
+            `Введите сумму в ${state.coin}, которую хотите продать (${offer.minDealAmount} - ${offer.maxDealAmount} ${state.coin})`,
+            Markup.inlineKeyboard([[Markup.button.callback('Отменить', 'cancel')]])
+        );
     });
 
     bot.action('confirm_buy', async (ctx) => {
@@ -449,7 +436,9 @@ export function handleDeals(bot: Telegraf<BotContext>) {
         await setState(userId, { action: 'sell_payment_details' });
         await ctx.editMessageText(
             'Введите свои реквизиты для получения оплаты (например, номер карты или банковские данные). Вводите внимательно!',
-            Markup.inlineKeyboard([[Markup.button.callback('Отменить', 'cancel')]])
+            Markup.inlineKeyboard([
+                [Markup.button.callback('Отменить', 'cancel')]
+            ])
         );
     });
 
@@ -482,9 +471,15 @@ export function handleDeals(bot: Telegraf<BotContext>) {
 
         const totalAmount = await calculateClientTransaction('buy', state.coin, state.fiatCurrency, state.amount, offer.markupPercent);
 
+        const index = offer.fiatCurrency.indexOf(deal.fiatCurrency);
+
         await ctx.editMessageText(
-            `Реквизиты продавца ${offer.warrantHolderPaymentDetails}. Переведите ${totalAmount} ${state.fiatCurrency} продавцу и нажмите кнопку "Оплатил"`,
-            Markup.inlineKeyboard([Markup.button.callback('Оплатил', `paid_${deal.id}`)])
+            `Сделка №${deal.id} создана. Реквизиты продавца ${offer.warrantHolderPaymentDetails[index]}. Переведите ${totalAmount} ${state.fiatCurrency} продавцу и нажмите кнопку "Оплатил"`,
+            Markup.inlineKeyboard([
+                [Markup.button.callback('Оплатил', `paid_${deal.id}`)],
+                [Markup.button.callback('Написать ордеродержателю', `chat_to_warrant_${deal.id}`)],
+                [Markup.button.callback('Отменить', 'cancel')]
+            ])
         );
     });
 
@@ -494,7 +489,9 @@ export function handleDeals(bot: Telegraf<BotContext>) {
         await setState(ctx.from.id.toString(), { action: 'buy_wallet_address' });
         await ctx.editMessageText(
             `Введите адрес своего ${state.coin} кошелька. Вводите внимательно!`,
-            { reply_markup: { inline_keyboard: [[Markup.button.callback('Отменить', 'cancel')]] } }
+            Markup.inlineKeyboard([
+                [Markup.button.callback('Отменить', 'cancel')]
+            ])
         );
     });
 
@@ -502,23 +499,53 @@ export function handleDeals(bot: Telegraf<BotContext>) {
         if (!ctx.from?.id) return;
         const dealId = parseInt(ctx.match[1], 10);
 
-        const deal = await prisma.deal.update({
+        const deal = await prisma.deal.findUnique({
             where: { id: dealId },
-            data: { clientConfirmed: true },
             include: { offer: { include: { warrantHolder: { include: { user: true } } } } }
         });
 
         if (!deal) return;
 
-        const totalAmount = await calculateClientTransaction(deal.offer.type, deal.offer.coin, deal.fiatCurrency, deal.amount, deal.markupPercent);
+        if (deal.status === 'expired') {
+            await ctx.editMessageText('Время сделки истекло', Markup.inlineKeyboard([]));
+            return;
+        }
 
-        await ctx.telegram.sendMessage(
-            deal.offer.warrantHolder.user.chatId,
-            `Пришла оплата сделки на покупку №${deal.id} на сумму ${totalAmount} ${deal.fiatCurrency}. Убедитесь в этом и нажмите кнопку "Получил"`,
-            Markup.inlineKeyboard([Markup.button.callback('Получил', `received_${deal.id}`)])
+        if (deal.status === 'blocked') {
+            await ctx.editMessageText('Данная сделка в данный момент заблокирована', Markup.inlineKeyboard([]));
+            return;
+        }
+
+        const updatedDeal = await prisma.deal.update({
+            where: { id: dealId },
+            data: { clientConfirmed: true },
+            include: { offer: { include: { warrantHolder: { include: { user: true } } } } }
+        });
+
+        const totalAmount = await calculateClientTransaction(
+            updatedDeal.offer.type,
+            updatedDeal.offer.coin,
+            updatedDeal.fiatCurrency,
+            updatedDeal.amount,
+            updatedDeal.markupPercent
         );
 
-        await ctx.editMessageText('Ожидайте подтверждения продавца');
+        await ctx.telegram.sendMessage(
+            updatedDeal.offer.warrantHolder.user.chatId,
+            `Пришла оплата сделки на покупку №${updatedDeal.id} на сумму ${totalAmount} ${updatedDeal.fiatCurrency}. Убедитесь в этом и нажмите кнопку "Получил"`,
+            Markup.inlineKeyboard([
+                [Markup.button.callback('Получил', `received_${updatedDeal.id}`)],
+                [Markup.button.callback('Написать клиенту', `chat_to_client_${updatedDeal.id}`)]
+            ])
+        );
+
+        await ctx.editMessageText(
+            `Сделка №${deal.id}. Ожидайте подтверждения продавца`,
+            Markup.inlineKeyboard([
+                [Markup.button.callback('Написать ордеродержателю', `chat_to_warrant_${updatedDeal.id}`)],
+                [Markup.button.callback('Отменить', 'cancel')]
+            ])
+        );
     });
 
     bot.action(/received_(\d+)/, async (ctx) => {
@@ -532,13 +559,25 @@ export function handleDeals(bot: Telegraf<BotContext>) {
                 client: { include: { referrer: true } }
             }
         });
+
         if (!deal) return;
+
+        if (deal.status === 'expired') {
+            await ctx.editMessageText('Время сделки истекло', Markup.inlineKeyboard([]));
+            return;
+        }
+
+        if (deal.status === 'blocked') {
+            await ctx.editMessageText('Данная сделка в данный момент заблокирована', Markup.inlineKeyboard([]));
+            return;
+        }
 
         const warrantHolder = await prisma.warrantHolder.findUnique({
             where: { id: deal.offer.userId },
             include: { user: true }
         });
         if (!warrantHolder) return;
+
         const client = await prisma.user.findUnique({
             where: { id: deal.userId },
             include: {
@@ -546,24 +585,23 @@ export function handleDeals(bot: Telegraf<BotContext>) {
                 referrer: true
             }
         });
-        if (!warrantHolder || !client) return;
+        if (!client) return;
 
         let recipientAddress: string;
         let txId: string | undefined;
 
         if (deal.offer.type === "buy") {
             recipientAddress = deal.clientPaymentDetails || client.wallets[0].address;
-
             txId = await sendP2PTransaction(
                 deal.amount,
                 deal.offer.coin,
-                warrantHolder.id,
+                warrantHolder.user.id,
                 recipientAddress,
                 "sell"
             );
         } else {
-            recipientAddress = deal.offer.warrantHolderPaymentDetails;
-
+            const index = deal.offer.fiatCurrency.indexOf(deal.fiatCurrency);
+            recipientAddress = deal.offer.warrantHolderPaymentDetails[index];
             txId = await sendP2PTransaction(
                 deal.amount,
                 deal.offer.coin,
@@ -574,7 +612,7 @@ export function handleDeals(bot: Telegraf<BotContext>) {
         }
 
         if (!txId) {
-            await ctx.reply('Ошибка при выполнении транзакции. Попробуйте снова.');
+            await ctx.reply('Ошибка при выполнении транзакции. Попробуйте снова');
             return;
         }
 
@@ -592,8 +630,85 @@ export function handleDeals(bot: Telegraf<BotContext>) {
             );
         }
 
-        await ctx.editMessageText(`Транзакция отправлена успешно!\nTxID: ${txId}`);
-        await ctx.telegram.sendMessage(client.chatId, `Транзакция отправлена успешно!\nTxID: ${txId}`);
+        const chain = deal.offer.coin === 'BTC' ? (config.NETWORK === 'main' ? 'btc/main' : 'btc/test3') : deal.offer.coin === 'LTC' ? 'ltc/main' : 'trx';
+        const txLink = deal.offer.coin === 'USDT'
+            ? (config.NETWORK === 'main' ? `https://tronscan.org/#/transaction/${txId}` : `https://shastascan.io/#/transaction/${txId}`)
+            : `https://api.blockcypher.com/v1/${chain}/txs/${txId}`;
+
+        await ctx.editMessageText(
+            `Транзакция отправлена успешно!\nTxID: ${txId}\nLink: ${txLink}`,
+            Markup.inlineKeyboard([
+                [Markup.button.callback('Написать клиенту', `chat_to_client_${deal.id}`)]
+            ])
+        );
+        await ctx.telegram.sendMessage(
+            client.chatId,
+            `Транзакция отправлена успешно!\n${txLink}`,
+            Markup.inlineKeyboard([
+                [Markup.button.callback('Написать ордеродержателю', `chat_to_warrant_${deal.id}`)]
+            ])
+        );
+        await clearState(ctx.from.id.toString());
+    });
+
+    bot.action(/chat_to_warrant_(\d+)/, async (ctx) => {
+        if (!ctx.from?.id) return;
+        const dealId = parseInt(ctx.match[1], 10);
+        const userId = ctx.from.id.toString();
+        await setState(userId, { action: 'chat_to_warrant', dealId });
+        await ctx.reply(
+            'Напишите сообщение для ордеродержателя',
+            Markup.inlineKeyboard([[Markup.button.callback('Отменить', 'cancel')]])
+        );
+    });
+
+    bot.action(/chat_to_client_(\d+)/, async (ctx) => {
+        if (!ctx.from?.id) return;
+        const dealId = parseInt(ctx.match[1], 10);
+        const userId = ctx.from.id.toString();
+        await setState(userId, { action: 'chat_to_client', dealId });
+        await ctx.reply(
+            'Напишите сообщение для клиента',
+            Markup.inlineKeyboard([[Markup.button.callback('Отменить', 'cancel')]])
+        );
+    });
+
+    bot.action(/reply_(\d+)/, async (ctx) => {
+        if (!ctx.from?.id) return;
+        const dealId = parseInt(ctx.match[1], 10);
+        const userId = ctx.from.id.toString();
+        const deal = await prisma.deal.findUnique({
+            where: { id: dealId },
+            include: { offer: true }
+        });
+        if (!deal) return;
+
+        const isWarrantHolder = deal.offer.userId === ctx.from.id;
+        await setState(userId, { action: isWarrantHolder ? 'chat_to_client' : 'chat_to_warrant', dealId });
+
+        await ctx.editMessageText(
+            `Напишите сообщение для ${isWarrantHolder ? 'клиента' : 'ордеродержателя'}`,
+            Markup.inlineKeyboard([[Markup.button.callback('Отменить', 'cancel')]])
+        );
+    });
+
+    bot.action(/close_chat_(\d+)/, async (ctx) => {
+        if (!ctx.from?.id) return;
+        const dealId = parseInt(ctx.match[1], 10);
+        const deal = await prisma.deal.findUnique({
+            where: { id: dealId },
+            include: { offer: { include: { warrantHolder: { include: { user: true } } } }, client: true }
+        });
+        if (!deal) return;
+
+        const isWarrantHolder = deal.offer.userId === ctx.from.id;
+        const recipientId = isWarrantHolder ? deal.client.chatId : deal.offer.warrantHolder.user.chatId;
+
+        await ctx.telegram.sendMessage(
+            recipientId,
+            `Пользователь закрыл чат по сделке №${deal.id} (${deal.offer.type === 'buy' ? 'покупка' : 'продажа'}, ${deal.offer.coin})`
+        );
+        await ctx.editMessageText('Чат закрыт', Markup.inlineKeyboard([]));
         await clearState(ctx.from.id.toString());
     });
 }
@@ -607,7 +722,7 @@ export async function handleDealsText(ctx: BotContext) {
         if (!('text' in ctx.message)) return;
         const amount = parseFloat(ctx.message.text);
         if (isNaN(amount)) {
-            await ctx.reply('Ошибка: введите корректное число.');
+            await ctx.reply('Ошибка: введите корректное число');
             return;
         }
 
@@ -615,7 +730,7 @@ export async function handleDealsText(ctx: BotContext) {
         if (!offer) return;
 
         if (amount < offer.minDealAmount || amount > offer.maxDealAmount) {
-            await ctx.reply(`Ошибка: сумма должна быть в диапазоне ${offer.minDealAmount} - ${offer.maxDealAmount} ${offer.coin}.`);
+            await ctx.reply(`Ошибка: сумма должна быть в диапазоне ${offer.minDealAmount} - ${offer.maxDealAmount} ${offer.coin}`);
             return;
         }
 
@@ -624,17 +739,17 @@ export async function handleDealsText(ctx: BotContext) {
         const totalAmount = await calculateClientTransaction('buy', state.coin, state.fiatCurrency, amount, offer.markupPercent);
 
         await ctx.reply(
-            `Вы покупаете ${amount} ${offer.coin} с наценкой продавца ${offer.markupPercent}%. ` +
+            `Вы покупаете ${amount} ${offer.coin}. ` +
             `Итоговая сумма перевода ${totalAmount} ${state.fiatCurrency}. Готовы продолжить?`,
             Markup.inlineKeyboard([
-                [Markup.button.callback('Отменить', 'cancel'), Markup.button.callback('Продолжить', 'confirm_buy')],
+                [Markup.button.callback('Отменить', 'cancel'), Markup.button.callback('Продолжить', 'confirm_buy')]
             ])
         );
     } else if (state.action === 'sell_amount') {
         if (!('text' in ctx.message)) return;
         const amount = parseFloat(ctx.message.text);
         if (isNaN(amount)) {
-            await ctx.reply('Ошибка: введите корректное число.');
+            await ctx.reply('Ошибка: введите корректное число');
             return;
         }
 
@@ -642,7 +757,7 @@ export async function handleDealsText(ctx: BotContext) {
         if (!offer) return;
 
         if (amount < offer.minDealAmount || amount > offer.maxDealAmount) {
-            await ctx.reply(`Ошибка: сумма должна быть в диапазоне ${offer.minDealAmount} - ${offer.maxDealAmount} ${offer.coin}.`);
+            await ctx.reply(`Ошибка: сумма должна быть в диапазоне ${offer.minDealAmount} - ${offer.maxDealAmount} ${offer.coin}`);
             return;
         }
 
@@ -651,12 +766,60 @@ export async function handleDealsText(ctx: BotContext) {
         const totalAmount = await calculateClientTransaction('sell', state.coin, state.fiatCurrency, amount, offer.markupPercent);
 
         await ctx.reply(
-            `Вы продаете ${amount} ${offer.coin} с наценкой ${offer.markupPercent}%. ` +
+            `Вы продаете ${amount} ${offer.coin}. ` +
             `Вы получите ${totalAmount} ${state.fiatCurrency}. Готовы продолжить?`,
             Markup.inlineKeyboard([
-                [Markup.button.callback('Отменить', 'cancel'), Markup.button.callback('Продолжить', 'confirm_sell')],
+                [Markup.button.callback('Отменить', 'cancel'), Markup.button.callback('Продолжить', `confirm_sell_${state.offerId}`)]
             ])
         );
+    } else if (state.action === 'chat_to_warrant') {
+        if (!('text' in ctx.message)) return;
+        const message = ctx.message.text.trim();
+        if (!message) {
+            await ctx.reply('Ошибка: введите корректное сообщение');
+            return;
+        }
+
+        const deal = await prisma.deal.findUnique({
+            where: { id: state.dealId },
+            include: { offer: { include: { warrantHolder: { include: { user: true } } } } }
+        });
+        if (!deal) return;
+
+        await ctx.telegram.sendMessage(
+            deal.offer.warrantHolder.user.chatId,
+            `${message}\n\nСделка №${deal.id} (${deal.offer.type === 'buy' ? 'покупка' : 'продажа'}, ${deal.offer.coin})`,
+            Markup.inlineKeyboard([
+                [Markup.button.callback('Ответить', `reply_${deal.id}`)],
+                [Markup.button.callback('Завершить разговор', `close_chat_${deal.id}`)]
+            ])
+        );
+        await ctx.reply('Сообщение отправлено', Markup.inlineKeyboard([]));
+        await clearState(userId);
+    } else if (state.action === 'chat_to_client') {
+        if (!('text' in ctx.message)) return;
+        const message = ctx.message.text.trim();
+        if (!message) {
+            await ctx.reply('Ошибка: введите корректное сообщение');
+            return;
+        }
+
+        const deal = await prisma.deal.findUnique({
+            where: { id: state.dealId },
+            include: { client: true, offer: true }
+        });
+        if (!deal) return;
+
+        await ctx.telegram.sendMessage(
+            deal.client.chatId,
+            `${message}\n\nСделка №${deal.id} (${deal.offer.type === 'buy' ? 'покупка' : 'продажа'}, ${deal.offer.coin})`,
+            Markup.inlineKeyboard([
+                [Markup.button.callback('Ответить', `reply_${deal.id}`)],
+                [Markup.button.callback('Завершить разговор', `close_chat_${deal.id}`)]
+            ])
+        );
+        await ctx.reply('Сообщение отправлено', Markup.inlineKeyboard([]));
+        await clearState(userId);
     } else if (state.action === 'sell_payment_details') {
         if (!('text' in ctx.message)) return;
         const paymentDetails = ctx.message.text.trim();
@@ -668,7 +831,7 @@ export async function handleDealsText(ctx: BotContext) {
         if (!offer) return;
 
         if (!paymentDetails) {
-            await ctx.reply('Ошибка: введите корректные реквизиты.');
+            await ctx.reply('Ошибка: введите корректные реквизиты');
             return;
         }
 
@@ -696,10 +859,19 @@ export async function handleDealsText(ctx: BotContext) {
             offer.warrantHolder.user.chatId,
             `Пришла заявка на сделку №${deal.id} на продажу ${state.amount} ${offer.coin}. ` +
             `Реквизиты покупателя: ${paymentDetails}. Переведите ${totalAmount} ${state.fiatCurrency} покупателю и нажмите "Получил и отправил"`,
-            Markup.inlineKeyboard([Markup.button.callback('Получил и отправил', `received_${deal.id}`)])
+            Markup.inlineKeyboard([
+                [Markup.button.callback('Получил и отправил', `received_${deal.id}`)],
+                [Markup.button.callback('Написать клиенту', `chat_to_client_${deal.id}`)]
+            ])
         );
 
-        await ctx.reply('Ожидайте подтверждения продавца');
+        await ctx.reply(
+            `Сделка №${deal.id} создана. Ожидайте подтверждения продавца`,
+            Markup.inlineKeyboard([
+                [Markup.button.callback('Написать ордеродержателю', `chat_to_warrant_${deal.id}`)],
+                [Markup.button.callback('Отменить', 'cancel')]
+            ])
+        );
     } else if (state.action === 'buy_wallet_address') {
         if (!('text' in ctx.message)) return;
         const walletAddress = ctx.message.text.trim();
@@ -711,7 +883,7 @@ export async function handleDealsText(ctx: BotContext) {
         if (!offer) return;
 
         if (!walletAddress) {
-            await ctx.reply('Ошибка: введите корректный адрес кошелька.');
+            await ctx.reply('Ошибка: введите корректный адрес кошелька');
             return;
         }
 
@@ -732,9 +904,15 @@ export async function handleDealsText(ctx: BotContext) {
 
         const totalAmount = await calculateClientTransaction('buy', state.coin, state.fiatCurrency, state.amount, offer.markupPercent);
 
+        const index = offer.fiatCurrency.indexOf(deal.fiatCurrency);
+
         await ctx.reply(
-            `Реквизиты продавца ${offer.warrantHolderPaymentDetails}. Переведите ${totalAmount} ${state.fiatCurrency} продавцу и нажмите кнопку "Оплатил"`,
-            Markup.inlineKeyboard([Markup.button.callback('Оплатил', `paid_${deal.id}`)])
+            `Реквизиты продавца ${offer.warrantHolderPaymentDetails[index]}. Переведите ${totalAmount} ${state.fiatCurrency} продавцу и нажмите кнопку "Оплатил"`,
+            Markup.inlineKeyboard([
+                [Markup.button.callback('Оплатил', `paid_${deal.id}`)],
+                [Markup.button.callback('Написать ордеродержателю', `chat_to_warrant_${deal.id}`)],
+                [Markup.button.callback('Отменить', 'cancel')]
+            ])
         );
     }
 }

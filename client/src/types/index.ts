@@ -6,6 +6,7 @@ export interface User {
     username: string;
     firstName: string;
     lastName: string;
+    fiatCurrency: string;
     referralLink: string;
     referrer?: UserShort;
     referralCount: number;
@@ -39,10 +40,11 @@ export interface Offer {
     minDealAmount: number;
     maxDealAmount: number;
     markupPercent: number;
-    warrantHolderPaymentDetails: string;
+    warrantHolderPaymentDetails: string[];
     warrantHolder: WarrantHolderShort;
     status: string;
     userId: number;
+    createdAt: string;
 }
 
 export interface Deal {
@@ -81,15 +83,33 @@ export interface SidebarProps {
     role: string;
 }
 
-export interface CreateOfferFormProps {
-    onSubmit: (newOffer: Omit<Offer, 'id' | 'status' | 'warrantHolder' | 'userId'>) => void;
-}
-
 export interface UsersTableBodyProps {
     users: User[];
     role: string;
     setUsers: Dispatch<SetStateAction<User[]>>;
     setError: Dispatch<SetStateAction<string | null>>;
+}
+
+export interface CreateOfferDto {
+    type: string;
+    coin: string;
+    fiatCurrency: string[];
+    minDealAmount: number;
+    maxDealAmount: number;
+    markupPercent: number;
+    warrantHolderPaymentDetails: string[];
+}
+
+export interface CreateOfferFormProps {
+    onSubmit: (newOffer: {
+        type: string;
+        coin: string;
+        fiatCurrency: string[];
+        minDealAmount: number;
+        maxDealAmount: number;
+        markupPercent: number;
+        warrantHolderPaymentDetails: string[];
+    }) => void;
 }
 
 export interface OffersTableBodyProps {
@@ -104,6 +124,7 @@ export interface DealsTableBodyProps {
     deals: Deal[];
     role: string;
     statusFilter: string;
+    onComplete: (id: number) => void;
 }
 
 export interface WarrantHoldersTableBodyProps {

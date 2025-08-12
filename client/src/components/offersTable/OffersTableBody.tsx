@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import Select from 'react-select';
 import { Tooltip } from '../Tooltip';
-import type {Offer, OffersTableBodyProps } from '../../types';
+import type { Offer, OffersTableBodyProps } from '../../types';
 
 const OffersTableBody: React.FC<OffersTableBodyProps> = ({ offers, role, onUpdate, onClose, statusFilter }) => {
     const [editingId, setEditingId] = useState<number | null>(null);
@@ -39,6 +39,19 @@ const OffersTableBody: React.FC<OffersTableBodyProps> = ({ offers, role, onUpdat
         }
     };
 
+    const formatCreatedAt = (date: string) => {
+        const createdDate = new Date(date);
+        createdDate.setHours(createdDate.getHours() + 3);
+        return createdDate.toLocaleString('ru-RU', {
+            day: '2-digit',
+            month: '2-digit',
+            year: 'numeric',
+            hour: '2-digit',
+            minute: '2-digit',
+            hour12: false
+        }).replace(',', '');
+    };
+
     return (
         <tbody>
         {offers.map((offer) => (
@@ -55,10 +68,16 @@ const OffersTableBody: React.FC<OffersTableBodyProps> = ({ offers, role, onUpdat
                             isMulti
                             options={fiatCurrencies}
                             value={fiatCurrencies.filter(currency => editForm.fiatCurrency.includes(currency.value))}
-                            onChange={(selected) => setEditForm({
-                                ...editForm,
-                                fiatCurrency: selected ? selected.map(option => option.value) : []
-                            })}
+                            onChange={(selected) => {
+                                const selectedCurrencies = selected ? selected.map(option => option.value) : [];
+                                setEditForm({
+                                    ...editForm,
+                                    fiatCurrency: selectedCurrencies,
+                                    warrantHolderPaymentDetails: selectedCurrencies.map((_, index) =>
+                                        editForm.warrantHolderPaymentDetails[index] || ''
+                                    )
+                                });
+                            }}
                             className="w-full"
                             placeholder="Выберите валюты..."
                         />
@@ -119,17 +138,24 @@ const OffersTableBody: React.FC<OffersTableBodyProps> = ({ offers, role, onUpdat
                 </td>
                 <td className="border p-2">
                     {editingId === offer.id && editForm ? (
-                        <input
-                            type="text"
-                            value={editForm.warrantHolderPaymentDetails}
-                            onChange={(e) => setEditForm({
-                                ...editForm,
-                                warrantHolderPaymentDetails: e.target.value
-                            })}
-                            className="w-full p-1 border rounded"
-                        />
+                        editForm.fiatCurrency.map((currency, index) => (
+                            <div key={currency} className="mb-2">
+                                <label className="block text-gray-700">Реквизиты для {currency}</label>
+                                <input
+                                    type="text"
+                                    value={editForm.warrantHolderPaymentDetails[index] || ''}
+                                    onChange={(e) => {
+                                        const updatedDetails = [...editForm.warrantHolderPaymentDetails];
+                                        updatedDetails[index] = e.target.value;
+                                        setEditForm({ ...editForm, warrantHolderPaymentDetails: updatedDetails });
+                                    }}
+                                    className="w-full p-1 border rounded"
+                                    placeholder={`Реквизиты для ${currency}`}
+                                />
+                            </div>
+                        ))
                     ) : (
-                        <span>{offer.warrantHolderPaymentDetails}</span>
+                        <span>{offer.warrantHolderPaymentDetails.join(', ')}</span>
                     )}
                 </td>
                 {role === 'admin' && statusFilter === 'all' && (
@@ -159,11 +185,12 @@ const OffersTableBody: React.FC<OffersTableBodyProps> = ({ offers, role, onUpdat
                             </Tooltip>
                         ) : (
                             <div className="bg-gray-100 px-2 py-1 rounded text-red-500">
-                                Гарант не найден
+                                Ордеродержатель не найден
                             </div>
                         )}
                     </td>
                 )}
+                <td className="border p-2">{formatCreatedAt(offer.createdAt)}</td>
                 {(role !== 'admin' || statusFilter === 'open' || statusFilter === 'all') && (
                     <td className="border p-2">
                         {editingId === offer.id ? (
@@ -177,13 +204,13 @@ const OffersTableBody: React.FC<OffersTableBodyProps> = ({ offers, role, onUpdat
                                         warrantHolderPaymentDetails: editForm.warrantHolderPaymentDetails,
                                         status: editForm.status
                                     })}
-                                    className="text-green-500 hover:underline"
+                                    className="px-3 py-1 rounded text-white bg-green-500 hover:bg-green-600 transition-colors"
                                 >
                                     Сохранить
                                 </button>
                                 <button
                                     onClick={handleCancelEdit}
-                                    className="text-gray-500 hover:underline"
+                                    className="px-3 py-1 rounded text-white bg-gray-500 hover:bg-gray-600 transition-colors"
                                 >
                                     Отмена
                                 </button>
@@ -194,14 +221,14 @@ const OffersTableBody: React.FC<OffersTableBodyProps> = ({ offers, role, onUpdat
                                     {role !== 'admin' && (
                                         <button
                                             onClick={() => handleEditClick(offer)}
-                                            className="text-blue-500 hover:underline"
+                                            className="px-3 py-1 rounded text-white bg-blue-500 hover:bg-blue-600 transition-colors"
                                         >
                                             Редактировать
                                         </button>
                                     )}
                                     <button
                                         onClick={() => onClose(offer.id)}
-                                        className="px-2 py-1 rounded text-white bg-red-500 hover:bg-red-600"
+                                        className="px-3 py-1 rounded text-white bg-red-500 hover:bg-red-600 transition-colors"
                                     >
                                         Закрыть
                                     </button>

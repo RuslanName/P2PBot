@@ -55,12 +55,10 @@ const WarrantHoldersTableBody: React.FC<WarrantHoldersTableBodyProps> = ({ warra
         <>
             <tbody>
             {warrantHolders.map((holder) => {
-                const offersContent = holder.offers
-                    .map(
-                        (offer) =>
-                            `ID: ${offer.id}\nТип: ${getOfferTypeName(offer.type)}\nКриптовалюта: ${offer.coin}\nСтатус: ${getOfferStatusName(offer.status)}`
-                    )
-                    .join('\n\n') || 'Оферты отсутствуют';
+                const offersContent = (holder.offers || []).map(
+                    (offer) =>
+                        `ID: ${offer.id}\nТип: ${getOfferTypeName(offer.type)}\nКриптовалюта: ${offer.coin}\nСтатус: ${getOfferStatusName(offer.status)}`
+                ).join('\n\n') || 'Оферты отсутствуют';
 
                 return (
                     <tr key={holder.id}>
@@ -95,7 +93,7 @@ const WarrantHoldersTableBody: React.FC<WarrantHoldersTableBodyProps> = ({ warra
                         <td className="border p-2">
                             <Tooltip content={offersContent}>
                                 <div className="bg-gray-100 px-2 py-1 rounded">
-                                    {holder.offers.length} оферты
+                                    {(holder.offers || []).length} оферты
                                 </div>
                             </Tooltip>
                         </td>

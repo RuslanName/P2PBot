@@ -8,20 +8,20 @@ const ECPair = ECPairFactory(ecc);
 
 const litecoinNetwork = {
     messagePrefix: '\x19Litecoin Signed Message:\n',
-    bech32: 'tltc',
-    bip32: { public: 0x0436ef7d, private: 0x0436ef7d },
-    pubKeyHash: 0x6f,
-    scriptHash: 0x3a,
-    wif: 0xef,
+    bech32: 'ltc',
+    bip32: { public: 0x0488b21e, private: 0x0488ade4 },
+    pubKeyHash: 0x30,
+    scriptHash: 0x32,
+    wif: 0xb0,
 };
 
 const tronWeb = new TronWeb({
-    fullHost: 'https://api.shasta.trongrid.io',
-    headers: { 'TRON-PRO-API-KEY': config.TRONGRID_API_KEY || '' },
+    fullHost: config.NETWORK === 'main' ? 'https://api.trongrid.io' : 'https://api.shasta.trongrid.io',
+    headers: { 'TRON-PRO-API-KEY': config.TRONGRID_API_KEY },
 });
 
 export function generateBTCWallet() {
-    const network = bitcoin.networks.testnet;
+    const network = config.NETWORK === 'main' ? bitcoin.networks.bitcoin : bitcoin.networks.testnet;
     const keyPair = ECPair.makeRandom({ network });
     const pubkeyBuffer = Buffer.from(keyPair.publicKey);
     const { address } = bitcoin.payments.p2wpkh({ pubkey: pubkeyBuffer, network });
@@ -37,5 +37,8 @@ export function generateLTCWallet() {
 
 export async function generateUSDTWallet() {
     const wallet = await tronWeb.createAccount();
-    return { address: wallet.address.base58, privateKey: wallet.privateKey };
+    return {
+        address: wallet.address.base58,
+        privateKey: wallet.privateKey
+    };
 }

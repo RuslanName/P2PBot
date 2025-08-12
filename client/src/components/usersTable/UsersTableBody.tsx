@@ -60,6 +60,7 @@ const UsersTableBody: React.FC<UsersTableBodyProps> = ({ users, role, setUsers, 
                         ))}
                     </div>
                 </td>
+                <td className="border p-2">{user.fiatCurrency}</td>
                 <td className="border p-2">
                     {user.referrer ? (
                         <Tooltip content={`ID: ${user.referrer.id}\nЗаблокирован: ${user.referrer.isBlocked ? 'Да' : 'Нет'}`}>

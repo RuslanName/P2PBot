@@ -13,6 +13,7 @@ model User {
   username       String         @unique
   firstName      String
   lastName       String
+  fiatCurrency   String
   referralLinkId String         @default(uuid(4))
   referrer       User?          @relation("Referrals", fields: [referrerId], references: [id])
   referrerId     Int?
@@ -23,7 +24,7 @@ model User {
   isBlocked      Boolean        @default(false)
   createdAt      DateTime       @default(now())
 
-  @@map("usersTable")
+  @@map("users")
 }
 
 model Wallet {
@@ -48,7 +49,7 @@ model WarrantHolder {
   password  String   @default(uuid(4))
   isBlocked Boolean  @default(false)
   createdAt DateTime @default(now())
-  Offer     Offer[]
+  offers    Offer[]
 
   @@map("warrant_holders")
 }
@@ -61,14 +62,14 @@ model Offer {
   minDealAmount               Float
   maxDealAmount               Float
   markupPercent               Float
-  warrantHolderPaymentDetails String
+  warrantHolderPaymentDetails String[]
   warrantHolder               WarrantHolder @relation(fields: [userId], references: [id])
   userId                      Int
   deals                       Deal[]        @relation()
   status                      String        @default("open")
   createdAt                   DateTime      @default(now())
 
-  @@map("offersTable")
+  @@map("offers")
 }
 
 model Deal {
@@ -77,8 +78,6 @@ model Deal {
   userId               Int
   offer                Offer    @relation(fields: [offerId], references: [id])
   offerId              Int
-  // transaction     Transaction? @relation(fields: [transactionId], references: [id])
-  // transactionId   Int?         @unique
   amount               Float
   fiatCurrency         String
   markupPercent        Float
@@ -88,21 +87,5 @@ model Deal {
   status               String   @default("pending")
   createdAt            DateTime @default(now())
 
-  @@map("dealsTable")
+  @@map("deals")
 }
-
-// model Transaction {
-//   id                    Int      @id @default(autoincrement())
-//   deal                  Deal?    @relation()
-//   txId                  String   @unique
-//   clientSend            Float
-//   clientReceived        Float
-//   warrantHolderSend     Float
-//   warrantHolderReceived Float
-//   minerFee              Float
-//   platformFee           Float
-//   referralRevenue       Float
-//   createdAt             DateTime @default(now())
-//
-//   @@map("transactions")
-// }

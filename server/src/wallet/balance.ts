@@ -6,18 +6,29 @@ import { TronWeb } from 'tronweb';
 const prisma = new PrismaClient();
 
 const blockcypherApi = axios.create({
-    baseURL: 'https://api.blockcypher.com/v1',
+    baseURL: `https://api.blockcypher.com/v1`,
     params: { token: config.BLOCKCYPHER_API_KEY },
 });
 
 const tronWeb = new TronWeb({
-    fullHost: 'https://api.shasta.trongrid.io',
-    headers: { 'TRON-PRO-API-KEY': config.TRONGRID_API_KEY || '' },
+    fullHost: config.NETWORK === 'main' ? 'https://api.trongrid.io' : 'https://api.shasta.trongrid.io',
+    headers: { 'TRON-PRO-API-KEY': config.TRONGRID_API_KEY },
 });
+
+const trc20ABI = [
+    {
+        "constant": true,
+        "inputs": [{ "name": "owner", "type": "address" }],
+        "name": "balanceOf",
+        "outputs": [{ "name": "", "type": "uint256" }],
+        "type": "function"
+    }
+];
 
 export async function getWalletBalance(
     userId: number,
-    coin: string
+    coin: string,
+    forceRefresh: boolean = false
 ): Promise<{ confirmed: number; unconfirmed: number; held: number }> {
     const user = await prisma.user.findUnique({
         where: { id: userId },
@@ -29,54 +40,58 @@ export async function getWalletBalance(
 
     if (!user) return { confirmed: 0, unconfirmed: 0, held: 0 };
 
-    const address = user.wallets[0].address;
+    const wallet = user.wallets[0];
+    const address = wallet.address;
 
     const clientPendingDeals = await prisma.deal.findMany({
         where: {
             userId,
             status: 'pending',
             offer: {
-                type: 'sell'
+                type: 'sell',
+                coin
             }
         },
     });
 
-    let heldAmount = clientPendingDeals.reduce((sum, deal) => sum + deal.amount * (1 + deal.markupPercent / 100), 0);
+    let held = clientPendingDeals.reduce((sum, deal) => sum + deal.amount * (1 + deal.markupPercent / 100), 0);
 
     if (user.warrantHolder) {
         const warrantHolderPendingDeals = await prisma.deal.findMany({
             where: {
+                userId,
                 status: 'pending',
                 offer: {
-                    type: 'buy', userId
+                    type: 'buy',
+                    coin
                 }
             },
         });
 
-        heldAmount = warrantHolderPendingDeals.reduce((sum, deal) => sum + deal.amount * (1 + deal.markupPercent / 100), 0);
+        held = warrantHolderPendingDeals.reduce((sum, deal) => sum + deal.amount, 0);
+    }
+
+    if (!forceRefresh && wallet.lastBalanceUpdate && Date.now() - wallet.lastBalanceUpdate.getTime() < 300_000) {
+        return {
+            confirmed: wallet.balance,
+            unconfirmed: wallet.unconfirmedBalance,
+            held
+        };
     }
 
     try {
         let confirmed: number;
         let unconfirmed: number;
         if (coin === 'USDT') {
-            const usdtContractAddress = 'TR7NHqjeKQxGTCi8q8ZY4pL8otSzgjLj6t';
-            const usdtABI = [
-                {
-                    "constant": true,
-                    "inputs": [{ "name": "_owner", "type": "address" }],
-                    "name": "balanceOf",
-                    "outputs": [{ "name": "balance", "type": "uint256" }],
-                    "type": "function"
-                }
-            ];
-            const hexAddress = tronWeb.address.toHex(address);
-            const contract = await tronWeb.contract(usdtABI).at(usdtContractAddress);
-            const balance = await contract.balanceOf(hexAddress).call();
+            const usdtContractAddress = config.NETWORK === 'main'
+                ? 'TR7NHqjeKQxGTCi8q8ZY4pL8otSzgjLj6t'
+                : 'TG3XXyExBkPp9nzdajDZsozEu4BkaSJozs';
+            const contract = await tronWeb.contract(trc20ABI).at(usdtContractAddress);
+            const balance = await contract.balanceOf(address).call({ from: address });
             confirmed = Number(balance) / 1e6;
             unconfirmed = 0;
         } else {
-            const chain = coin === 'BTC' ? 'btc/test3' : 'ltc/testnet';
+            const chain = coin === 'BTC' ? (config.NETWORK === 'main' ? 'btc/main' : 'btc/test3') : 'ltc/main';
             let response;
             try {
                 response = await blockcypherApi.get(`/${chain}/addrs/${address}/balance`);
@@ -91,20 +106,24 @@ export async function getWalletBalance(
                 }
             }
         }
-
+    
         await prisma.wallet.update({
-            where: { id: user.wallets[0].id },
-            data: { balance: confirmed, unconfirmedBalance: unconfirmed, lastBalanceUpdate: new Date() }
+            where: { id: wallet.id },
+            data: {
+                balance: confirmed,
+                unconfirmedBalance: unconfirmed,
+                lastBalanceUpdate: new Date()
+            }
         });
 
-        return { confirmed, unconfirmed, held: heldAmount };
+        return { confirmed, unconfirmed, held};
     } catch (error: any) {
-        console.error(`Error fetching balance for ${coin}:`, {
+        console.error(`Error while retrieving balance for ${coin}:`, {
             message: error.message,
             stack: error.stack,
             code: error.code,
             response: error.response ? error.response.data : null
         });
-        return { confirmed: user.wallets[0].balance, unconfirmed: user.wallets[0].unconfirmedBalance || 0, held: heldAmount };
+        return { confirmed: wallet.balance, unconfirmed: wallet.unconfirmedBalance, held };
     }
 }

@@ -10,7 +10,7 @@ const CreateOfferForm: React.FC<CreateOfferFormProps> = ({ onSubmit }) => {
         minDealAmount: 0,
         maxDealAmount: 0,
         markupPercent: 0,
-        warrantHolderPaymentDetails: '',
+        warrantHolderPaymentDetails: [] as string[],
     });
 
     const fiatCurrencies = [
@@ -32,7 +32,7 @@ const CreateOfferForm: React.FC<CreateOfferFormProps> = ({ onSubmit }) => {
             minDealAmount: 0,
             maxDealAmount: 0,
             markupPercent: 0,
-            warrantHolderPaymentDetails: '',
+            warrantHolderPaymentDetails: [],
         });
     };
 
@@ -61,7 +61,6 @@ const CreateOfferForm: React.FC<CreateOfferFormProps> = ({ onSubmit }) => {
                         <option value="BTC">BTC</option>
                         <option value="LTC">LTC</option>
                         <option value="USDT">USDT</option>
-                        <option value="XMR">XMR</option>
                     </select>
                 </div>
                 <div>
@@ -70,10 +69,16 @@ const CreateOfferForm: React.FC<CreateOfferFormProps> = ({ onSubmit }) => {
                         isMulti
                         options={fiatCurrencies}
                         value={fiatCurrencies.filter(currency => newOffer.fiatCurrency.includes(currency.value))}
-                        onChange={(selected) => setNewOffer({
-                            ...newOffer,
-                            fiatCurrency: selected ? selected.map(option => option.value) : []
-                        })}
+                        onChange={(selected) => {
+                            const selectedCurrencies = selected ? selected.map(option => option.value) : [];
+                            setNewOffer({
+                                ...newOffer,
+                                fiatCurrency: selectedCurrencies,
+                                warrantHolderPaymentDetails: selectedCurrencies.map((_, index) =>
+                                    newOffer.warrantHolderPaymentDetails[index] || ''
+                                )
+                            });
+                        }}
                         className="w-full"
                         placeholder="Выберите валюты..."
                     />
@@ -114,16 +119,22 @@ const CreateOfferForm: React.FC<CreateOfferFormProps> = ({ onSubmit }) => {
                         step="any"
                     />
                 </div>
-                <div>
-                    <label className="block text-gray-700">Платежные реквизиты</label>
-                    <input
-                        type="text"
-                        value={newOffer.warrantHolderPaymentDetails}
-                        onChange={(e) => setNewOffer({ ...newOffer, warrantHolderPaymentDetails: e.target.value })}
-                        className="w-full p-2 border rounded"
-                        placeholder="Реквизиты"
-                    />
-                </div>
+                {newOffer.fiatCurrency.map((currency, index) => (
+                    <div key={currency}>
+                        <label className="block text-gray-700">Реквизиты для {currency}</label>
+                        <input
+                            type="text"
+                            value={newOffer.warrantHolderPaymentDetails[index] || ''}
+                            onChange={(e) => {
+                                const updatedDetails = [...newOffer.warrantHolderPaymentDetails];
+                                updatedDetails[index] = e.target.value;
+                                setNewOffer({ ...newOffer, warrantHolderPaymentDetails: updatedDetails });
+                            }}
+                            className="w-full p-2 border rounded"
+                            placeholder={`Реквизиты для ${currency}`}
+                        />
+                    </div>
+                ))}
             </div>
             <button
                 type="submit"

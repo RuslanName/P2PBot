@@ -17,14 +17,13 @@ export function handleWithdraw(bot: Telegraf<BotContext>) {
                 Markup.button.callback('LTC', 'withdraw_LTC')
             ],
             [
-                Markup.button.callback('USDT', 'withdraw_USDT'),
-                Markup.button.callback('XMR', 'withdraw_XMR')
+                Markup.button.callback('USDT', 'withdraw_USDT')
             ],
             [Markup.button.callback('Отменить', 'cancel')],
         ]));
     });
 
-    bot.action(/withdraw_(BTC|LTC|USDT|XMR)/, async (ctx) => {
+    bot.action(/withdraw_(BTC|LTC|USDT)/, async (ctx) => {
         const coin = ctx.match[1];
         if (!ctx.from?.id) return;
         const userId = ctx.from.id.toString();
@@ -32,7 +31,7 @@ export function handleWithdraw(bot: Telegraf<BotContext>) {
             where: { chatId: userId }
         });
 
-        const { confirmed, unconfirmed, held } = await getWalletBalance(user.id, coin);
+        const { confirmed, unconfirmed, held } = await getWalletBalance(user.id, coin, true);
 
         const totalAmount = (confirmed - unconfirmed - held).toFixed(8);
 
@@ -53,7 +52,7 @@ export async function handleWithdrawText(ctx: BotContext) {
         if (!('text' in ctx.message)) return;
         const amount = parseFloat(ctx.message.text);
         if (isNaN(amount)) {
-            await ctx.reply('Ошибка: введите корректное число.');
+            await ctx.reply('Ошибка: введите корректное число');
             return;
         }
         await setState(ctx.from.id.toString(), { withdrawAmount: amount });
@@ -87,7 +86,12 @@ export async function handleWithdrawText(ctx: BotContext) {
             return;
         }
 
-        await ctx.reply(`Транзакция отправлена успешно! TxID: ${txId}`);
+        const chain = coin === 'BTC' ? (config.NETWORK === 'main' ? 'btc/main' : 'btc/test3') : coin === 'LTC' ? 'ltc/main' : 'trx';
+        const txLink = coin === 'USDT'
+            ? (config.NETWORK === 'main' ? `https://tronscan.org/#/transaction/${txId}` : `https://shastascan.io/#/transaction/${txId}`)
+            : `https://api.blockcypher.com/v1/${chain}/txs/${txId}`;
+
+        await ctx.reply(`Транзакция отправлена успешно!\n${txLink}`);
         await clearState(userId);
     }
 }
