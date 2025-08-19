@@ -10,6 +10,6 @@ export default defineConfig({
         changeOrigin: true,
       },
     },
-    allowedHosts: ['localhost', '127.0.0.1'],
+    allowedHosts: ['localhost', '127.0.0.1', 'ruslan-name-5173.cloudpub.ru'],
   },
 });

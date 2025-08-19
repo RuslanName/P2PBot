@@ -60,29 +60,22 @@ export async function calculateClientTransaction(
     let trxFeeEquivalent = 0;
 
     if (coin === 'USDT') {
-        const requiredTrx = await estimateNetworkFee(coin, config.MINER_FEE, 1, [{ address: 'recipient', value: amount }]);
+        const requiredTrx = await estimateNetworkFee(coin, config.MINER_COMMISSION_LEVEL, 1, [{ address: 'recipient', value: amount }]);
         const trxPrice = await getCryptoPrice('TRX', 1, fiatCurrency);
         const usdtPrice = await getCryptoPrice('USDT', 1, fiatCurrency);
         trxFeeEquivalent = (requiredTrx * trxPrice) / usdtPrice;
     } else {
         const outputs = [{ address: 'recipient', value: amount }];
-        minerFee = await estimateNetworkFee(coin, config.MINER_FEE, 1, outputs);
+        minerFee = await estimateNetworkFee(coin, config.MINER_COMMISSION_LEVEL, 1, outputs);
     }
-
-    const platformFeePercent = type === 'buy'
-        ? config.PLATFORM_BUY_FEE_PERCENT / 100
-        : config.PLATFORM_SELL_FEE_PERCENT / 100;
-    const platformFee = amount * platformFeePercent;
-    const referralPercent = config.REFERRAL_REVENUE_PERCENT / 100;
-    const referralFee = platformFee * referralPercent;
 
     try {
         if (type === 'buy') {
-            const totalAmount = amount * (1 + markupPercent / 100) + minerFee + platformFee + referralFee + trxFeeEquivalent;
+            const totalAmount = amount * (1 + markupPercent / 100);
             const fiatAmount = await getCryptoPrice(coin, totalAmount, fiatCurrency);
             return parseFloat(fiatAmount.toFixed(2));
         } else {
-            const totalAmount = amount * (1 - markupPercent / 100) - minerFee - platformFee - referralFee - trxFeeEquivalent;
+            const totalAmount = amount * (1 - markupPercent / 100) - minerFee - trxFeeEquivalent;
             if (totalAmount < 0) {
                 console.error('Total amount is negative after fees');
                 return 0;
@@ -100,10 +93,10 @@ export function calculateReferralFee(
     amount: number,
     offerType: 'buy' | 'sell'
 ): number {
-    const platformFeePercent = offerType === 'buy'
-        ? config.PLATFORM_BUY_FEE_PERCENT
-        : config.PLATFORM_SELL_FEE_PERCENT;
-    const platformFee = amount * (platformFeePercent / 100);
+    const platformCommissionPercent = offerType === 'buy'
+        ? config.PLATFORM_BUY_COMMISSION_PERCENT
+        : config.PLATFORM_SELL_COMMISSION_PERCENT;
+    const platformFee = amount * (platformCommissionPercent / 100);
     const referralPercent = config.REFERRAL_REVENUE_PERCENT / 100;
     const referralFee = platformFee * referralPercent;
     return parseFloat(referralFee.toFixed(8));

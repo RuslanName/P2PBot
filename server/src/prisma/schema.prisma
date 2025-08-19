@@ -8,21 +8,24 @@ datasource db {
 }
 
 model User {
-  id             Int            @id @default(autoincrement())
-  chatId         String         @unique
-  username       String         @unique
-  firstName      String
-  lastName       String
-  fiatCurrency   String
-  referralLinkId String         @default(uuid(4))
-  referrer       User?          @relation("Referrals", fields: [referrerId], references: [id])
-  referrerId     Int?
-  referrals      User[]         @relation("Referrals")
-  wallets        Wallet[]       @relation()
-  deals          Deal[]         @relation("ClientDeals")
-  warrantHolder  WarrantHolder? @relation()
-  isBlocked      Boolean        @default(false)
-  createdAt      DateTime       @default(now())
+  id               Int               @id @default(autoincrement())
+  chatId           String            @unique
+  username         String            @unique
+  firstName        String
+  lastName         String
+  fiatCurrency     String
+  referralLinkId   String            @default(uuid(4))
+  referrer         User?             @relation("Referrals", fields: [referrerId], references: [id])
+  referrerId       Int?
+  referrals        User[]            @relation("Referrals")
+  wallets          Wallet[]          @relation()
+  deals            Deal[]            @relation("ClientDeals")
+  supportTickets   SupportTicket[]
+  amlVerifications AmlVerification[] @relation()
+  warrantHolder    WarrantHolder?    @relation()
+  isBlocked        Boolean           @default(false)
+
+  createdAt DateTime @default(now())
 
   @@map("users")
 }
@@ -88,4 +91,29 @@ model Deal {
   createdAt            DateTime @default(now())
 
   @@map("deals")
+}
+
+model SupportTicket {
+  id          Int      @id @default(autoincrement())
+  user        User     @relation(fields: [userId], references: [id])
+  userId      Int
+  reason      String
+  description String
+  imagesPath  String[]
+  status      String   @default("open")
+  createdAt   DateTime @default(now())
+
+  @@map("support_tickets")
+}
+
+model AmlVerification {
+  id                     Int      @id @default(autoincrement())
+  user                   User     @relation(fields: [userId], references: [id])
+  userId                 Int
+  reason                 String
+  verificationImagesPath String[]
+  status                 String   @default("open")
+  createdAt              DateTime @default(now())
+
+  @@map("aml_verifications")
 }

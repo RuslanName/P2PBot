@@ -27,3 +27,72 @@ body {
 .no-arrows {
   -moz-appearance: textfield;
 }
+
+.table-responsive {
+  @apply overflow-x-auto;
+}
+
+.table-responsive table {
+  @apply w-full border-collapse;
+}
+
+.table-responsive th,
+.table-responsive td {
+  @apply border border-gray-200 p-2 sm:p-3 text-sm sm:text-base text-center;
+}
+
+.table-responsive th {
+  @apply bg-gray-100 font-semibold;
+}
+
+.table-responsive td {
+  @apply border border-gray-200 p-2 sm:p-3 text-sm sm:text-base text-center;
+  word-break: break-word;
+  max-width: 200px;
+}
+
+.card-stack {
+  @apply md:hidden space-y-4;
+}
+
+.card-stack > div {
+  @apply bg-white rounded-lg shadow-md border border-gray-200;
+}
+
+.card-stack .vertical-table {
+  @apply w-full border-collapse;
+}
+
+.card-stack .vertical-table tr {
+  @apply border-none;
+}
+
+.card-stack .vertical-table td {
+  @apply p-1 text-sm text-center;
+}
+
+.card-stack .vertical-table .card-label {
+  @apply font-semibold text-gray-700 w-1/3;
+}
+
+.card-stack .vertical-table .card-value {
+  @apply text-gray-900 w-2/3;
+  word-break: break-word;
+  max-width: 200px;
+}
+
+.card-stack .wallets {
+  @apply flex flex-wrap gap-2;
+}
+
+.card-stack .wallet-item {
+  @apply bg-gray-100 px-2 py-1 rounded text-sm;
+}
+
+.card-stack .referrer {
+  @apply bg-gray-100 px-2 py-1 rounded text-sm;
+}
+
+.card-stack .action-button {
+  @apply mt-2 px-3 py-1 rounded text-white text-sm w-full;
+}

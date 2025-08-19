@@ -1,6 +1,14 @@
 import { Request, Response } from 'express';
 import * as services from './services';
-import {CreateOfferDto, UpdateOfferDto, UpdateWarrantHolderDto, UpdateUserDto, UpdateDealDto} from '../types';
+import {
+    CreateOfferDto,
+    UpdateOfferDto,
+    UpdateWarrantHolderDto,
+    UpdateUserDto,
+    UpdateDealDto,
+    UpdateSupportTicketDto,
+    UpdateAmlVerificationDto
+} from '../types';
 
 export async function login(req: Request, res: Response) {
     const { username, password } = req.body;
@@ -34,9 +42,11 @@ export async function checkAuth(req: Request, res: Response) {
 }
 
 export async function getUsers(req: Request, res: Response) {
+    const page = parseInt(req.query.page as string) || 1;
+    const pageSize = parseInt(req.query.pageSize as string) || 10;
     try {
-        const users = await services.getUsers();
-        res.json(users);
+        const result = await services.getUsers(page, pageSize);
+        res.json(result);
     } catch (error: any) {
         res.status(500).json({ error: 'Failed to fetch usersTable' });
     }
@@ -55,9 +65,11 @@ export async function updateUser(req: Request, res: Response) {
 
 export async function getOffers(req: Request, res: Response) {
     const token = req.cookies.token;
+    const page = parseInt(req.query.page as string) || 1;
+    const pageSize = parseInt(req.query.pageSize as string) || 10;
     try {
-        const offers = await services.getOffers(token);
-        res.json(offers);
+        const result = await services.getOffers(token, page, pageSize);
+        res.json(result);
     } catch (error: any) {
         res.status(500).json({ error: 'Failed to fetch offersTable' });
     }
@@ -94,18 +106,22 @@ export async function updateOffer(req: Request, res: Response) {
 }
 
 export async function getDeals(req: Request, res: Response) {
+    const page = parseInt(req.query.page as string) || 1;
+    const pageSize = parseInt(req.query.pageSize as string) || 10;
     try {
-        const deals = await services.getDeals();
-        res.json(deals);
+        const result = await services.getDeals(page, pageSize);
+        res.json(result);
     } catch (error: any) {
         res.status(500).json({ error: 'Failed to fetch dealsTable' });
     }
 }
 
 export async function getDealsFiltered(req: Request, res: Response) {
+    const page = parseInt(req.query.page as string) || 1;
+    const pageSize = parseInt(req.query.pageSize as string) || 10;
     try {
-        const deals = await services.getDealsFiltered(req.query);
-        res.json(deals);
+        const result = await services.getDealsFiltered(req.query, page, pageSize);
+        res.json(result);
     } catch (error: any) {
         res.status(500).json({ error: 'Failed to fetch dealsTable' });
     }
@@ -124,10 +140,12 @@ export async function updateDeal(req: Request, res: Response) {
 
 export async function getWarrantHolders(req: Request, res: Response) {
     const token = req.cookies.token;
+    const page = parseInt(req.query.page as string) || 1;
+    const pageSize = parseInt(req.query.pageSize as string) || 10;
     const { role, id } = (await services.checkAuth(token)) || {};
     try {
-        const warrantHolders = await services.getWarrantHolders(role || '', id);
-        res.json(warrantHolders);
+        const result = await services.getWarrantHolders(role || '', id, page, pageSize);
+        res.json(result);
     } catch (error: any) {
         res.status(500).json({ error: 'Failed to fetch warrant holders' });
     }
@@ -149,6 +167,50 @@ export async function updateWarrantHolder(req: Request, res: Response) {
     try {
         const updatedWarrantHolder = await services.updateWarrantHolder(parseInt(id), updateDto);
         res.json(updatedWarrantHolder);
+    } catch (error: any) {
+        res.status(error.status || 500).json({ error: error.message });
+    }
+}
+
+export async function getSupportTickets(req: Request, res: Response) {
+    const page = parseInt(req.query.page as string) || 1;
+    const pageSize = parseInt(req.query.pageSize as string) || 10;
+    try {
+        const result = await services.getSupportTickets(page, pageSize);
+        res.json(result);
+    } catch (error: any) {
+        res.status(500).json({ error: 'Failed to fetch support tickets' });
+    }
+}
+
+export async function updateSupportTicket(req: Request, res: Response) {
+    const { id } = req.params;
+    const updateDto: UpdateSupportTicketDto = req.body;
+    try {
+        const updatedTicket = await services.updateSupportTicket(parseInt(id), updateDto);
+        res.json(updatedTicket);
+    } catch (error: any) {
+        res.status(error.status || 500).json({ error: error.message });
+    }
+}
+
+export async function getAmlVerifications(req: Request, res: Response) {
+    const page = parseInt(req.query.page as string) || 1;
+    const pageSize = parseInt(req.query.pageSize as string) || 10;
+    try {
+        const result = await services.getAmlVerifications(page, pageSize);
+        res.json(result);
+    } catch (error: any) {
+        res.status(500).json({ error: 'Failed to fetch AML verifications' });
+    }
+}
+
+export async function updateAmlVerification(req: Request, res: Response) {
+    const { id } = req.params;
+    const updateDto: UpdateAmlVerificationDto = req.body;
+    try {
+        const updatedVerification = await services.updateAmlVerification(parseInt(id), updateDto);
+        res.json(updatedVerification);
     } catch (error: any) {
         res.status(error.status || 500).json({ error: error.message });
     }

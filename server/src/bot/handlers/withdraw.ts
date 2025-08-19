@@ -5,6 +5,7 @@ import { getState, setState, clearState } from '../state';
 import { getWalletBalance } from "../../wallet/balance";
 import {withdrawToExternalWallet} from "../../wallet/transaction";
 import {config} from "../../config/env";
+import {checkAmlLimits} from "../../utils/amlCheck";
 
 const prisma = new PrismaClient();
 
@@ -17,7 +18,7 @@ export function handleWithdraw(bot: Telegraf<BotContext>) {
                 Markup.button.callback('LTC', 'withdraw_LTC')
             ],
             [
-                Markup.button.callback('USDT', 'withdraw_USDT')
+                Markup.button.callback('USDT TRC20', 'withdraw_USDT')
             ],
             [Markup.button.callback('Отменить', 'cancel')],
         ]));
@@ -37,10 +38,83 @@ export function handleWithdraw(bot: Telegraf<BotContext>) {
 
         await setState(userId, { coin, action: 'withdraw_amount' });
         await ctx.editMessageText(
-            `Сколько ${coin} хотите вывести? На вашем кошельке сейчас ${totalAmount} ${coin}. Комиссия платформы за вывод ${config.PLATFORM_WITHDRAW_FEE_PERCENT}%`,
+            `Сколько ${coin} хотите вывести? На вашем кошельке сейчас ${totalAmount} ${coin}. Комиссия платформы за вывод ${config.PLATFORM_WITHDRAW_COMMISSION_PERCENT}%`,
             { reply_markup: { inline_keyboard: [] } }
         );
     });
+}
+
+async function checkWithdrawLimits(userId: string): Promise<boolean> {
+    if (!config.AML_VERIFICATION_ENABLED) return false;
+
+    const now = new Date();
+    const oneHourAgo = new Date(now.getTime() - 60 * 60 * 1000);
+    const oneDayAgo = new Date(now.getTime() - 24 * 60 * 1000);
+    const oneWeekAgo = new Date(now.getTime() - 7 * 24 * 60 * 1000);
+
+    const withdrawalsInHour = await prisma.deal.count({
+        where: {
+            userId: parseInt(userId),
+            txId: { not: null },
+            createdAt: { gte: oneHourAgo },
+        },
+    });
+
+    if (withdrawalsInHour > 3) {
+        await prisma.amlVerification.create({
+            data: {
+                userId: parseInt(userId),
+                reason: 'Слишком много различных выводов за час',
+                verificationImagesPath: [],
+                status: 'open',
+            },
+        });
+        return true;
+    }
+
+    const uniqueWalletsDay = await prisma.deal.groupBy({
+        by: ['clientPaymentDetails'],
+        where: {
+            userId: parseInt(userId),
+            txId: { not: null },
+            createdAt: { gte: oneDayAgo },
+        },
+    });
+
+    if (uniqueWalletsDay.length > 3) {
+        await prisma.amlVerification.create({
+            data: {
+                userId: parseInt(userId),
+                reason: 'Слишком много различных кошельков за день',
+                verificationImagesPath: [],
+                status: 'open',
+            },
+        });
+        return true;
+    }
+
+    const uniqueWalletsWeek = await prisma.deal.groupBy({
+        by: ['clientPaymentDetails'],
+        where: {
+            userId: parseInt(userId),
+            txId: { not: null },
+            createdAt: { gte: oneWeekAgo },
+        },
+    });
+
+    if (uniqueWalletsWeek.length > 5) {
+        await prisma.amlVerification.create({
+            data: {
+                userId: parseInt(userId),
+                reason: 'Слишком много различных кошельков за неделю',
+                verificationImagesPath: [],
+                status: 'open',
+            },
+        });
+        return true;
+    }
+
+    return false;
 }
 
 export async function handleWithdrawText(ctx: BotContext) {
@@ -66,6 +140,23 @@ export async function handleWithdrawText(ctx: BotContext) {
 
         if (!coin || !amount || isNaN(amount)) {
             await ctx.reply('Ошибка: неверные параметры перевода');
+            return;
+        }
+
+        const needsAmlVerification = await checkAmlLimits(userId);
+        if (needsAmlVerification) {
+            const verification = await prisma.amlVerification.findFirst({
+                where: { user: { chatId: userId }, status: 'open' },
+            });
+
+            await ctx.reply(
+                `🚫 Мы заметили подозрительную активность в ваших действиях.\n` +
+                `Причина: "${verification?.reason}".\n` +
+                `Вам необходимо приложить документы (паспорт, подтверждение адреса, источник средств) для проверки.`,
+                Markup.inlineKeyboard([
+                    [Markup.button.callback('Приложить документы', 'support_category_aml')],
+                ])
+            );
             return;
         }
 

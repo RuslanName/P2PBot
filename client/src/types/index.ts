@@ -1,4 +1,4 @@
-import type {Dispatch, SetStateAction} from "react";
+import { type Dispatch, type ReactNode, type SetStateAction } from "react";
 
 export interface User {
     id: number;
@@ -72,14 +72,33 @@ export interface Deal {
     createdAt: string;
 }
 
+export interface SupportTicket {
+    id: number;
+    user: UserShort;
+    reason: string;
+    description: string;
+    imagesPath: string[];
+    status: string;
+    createdAt: string;
+}
+
+export interface AmlVerification {
+    id: number;
+    user: UserShort;
+    reason: string;
+    verificationImagesPath: string[];
+    status: string;
+    createdAt: string;
+}
+
 export interface TooltipProps {
-    content: string;
-    children: React.ReactNode;
+    content: ReactNode;
+    children: ReactNode;
 }
 
 export interface SidebarProps {
-    activeTab: 'users' | 'offers' | 'deals' | 'warrant-holders';
-    setActiveTab: (tab: 'users' | 'offers' | 'deals' | 'warrant-holders') => void;
+    activeTab: 'users' | 'offers' | 'deals' | 'warrant-holders' | 'support-tickets' | 'aml-verifications';
+    setActiveTab: (tab: 'users' | 'offers' | 'deals' | 'warrant-holders' | 'support-tickets' | 'aml-verifications') => void;
     role: string;
 }
 
@@ -131,6 +150,21 @@ export interface WarrantHoldersTableBodyProps {
     warrantHolders: WarrantHolder[];
     role: string;
     setWarrantHolders: Dispatch<SetStateAction<WarrantHolder[]>>;
+}
+
+export interface SupportTicketsTableBodyProps {
+    tickets: SupportTicket[];
+    role: string;
+    statusFilter: string;
+    onComplete: (id: number) => void;
+}
+
+export interface AmlVerificationsTableBodyProps {
+    verifications: AmlVerification[];
+    role: string;
+    statusFilter: string;
+    onApprove: (id: number) => void;
+    onReject: (id: number) => void;
 }
 
 interface UserShort {

@@ -1,14 +1,15 @@
-import { Telegraf, Context } from 'telegraf';
-import { PrismaClient } from '@prisma/client';
-import { BotState } from '../types';
+import {Context, Telegraf} from 'telegraf';
+import { config } from '../config/env';
+import { checkBlockedMiddleware } from './middleware';
 import { handleStart } from './handlers/start';
 import { handleDeals, handleDealsText } from './handlers/deals';
 import { handleWallets } from './handlers/wallets';
 import { handleWithdraw, handleWithdrawText } from './handlers/withdraw';
-import { getState } from "./state";
-import { config } from "../config/env";
-import { handleProfile } from "./handlers/profile";
-import { handleReferral } from "./handlers/referral";
+import { handleProfile } from './handlers/profile';
+import { handleReferral } from './handlers/referral';
+import { handleSupport, handleSupportText } from './handlers/support';
+import { handleAml } from './handlers/aml';
+import {BotState} from "../types";
 
 export interface BotContext extends Context {
     state: BotState;
@@ -19,25 +20,7 @@ if (!telegramToken) throw new Error('Telegram token is missing');
 
 export const bot = new Telegraf<BotContext>(telegramToken);
 
-const prisma = new PrismaClient();
-
-bot.use(async (ctx, next) => {
-    const userId = ctx.from?.id.toString();
-    if (userId) {
-        const user = await prisma.user.findUnique({
-            where: { chatId: userId },
-            select: { isBlocked: true }
-        });
-        if (user?.isBlocked) {
-            await ctx.reply('🚫 Ваш аккаунт заблокирован!');
-            return;
-        }
-        ctx.state = await getState(userId);
-    } else {
-        ctx.state = {};
-    }
-    await next();
-});
+bot.use(checkBlockedMiddleware);
 
 handleStart(bot);
 handleProfile(bot);
@@ -45,6 +28,8 @@ handleDeals(bot);
 handleWallets(bot);
 handleWithdraw(bot);
 handleReferral(bot);
+handleSupport(bot);
+handleAml(bot);
 
 bot.on('text', async (ctx) => {
     const state = ctx.state;
@@ -59,6 +44,11 @@ bot.on('text', async (ctx) => {
         state.action === 'chat_to_client'
     ) {
         await handleDealsText(ctx);
+    } else if (
+        state.action === 'support_describe_problem' ||
+        state.action?.startsWith('support_reply_')
+    ) {
+        await handleSupportText(ctx);
     } else {
         await ctx.reply('Пожалуйста, выберите действие из меню.');
     }

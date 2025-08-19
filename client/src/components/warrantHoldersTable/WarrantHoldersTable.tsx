@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useRef } from 'react';
 import axios from 'axios';
 import { useStore } from '../../store/store';
 import type { WarrantHolder } from '../../types';
@@ -7,24 +7,70 @@ import WarrantHoldersTableBody from './WarrantHoldersTableBody';
 const WarrantHoldersTable: React.FC = () => {
     const { role } = useStore();
     const [warrantHolders, setWarrantHolders] = useState<WarrantHolder[]>([]);
-    const [loading, setLoading] = useState(true);
+    const [loading, setLoading] = useState(false);
     const [newHolderInput, setNewHolderInput] = useState('');
     const [error, setError] = useState<string | null>(null);
+    const [isMobile, setIsMobile] = useState(window.innerWidth < 768);
+    const [, setPage] = useState(1);
+    const [hasMore, setHasMore] = useState(true);
+    const pageSize = 10;
+    const observer = useRef<IntersectionObserver | null>(null);
+
+    const fetchWarrantHolders = async (pageNum: number, append: boolean = false) => {
+        setLoading(true);
+        try {
+            const response = await axios.get('/api/warrant-holders', {
+                params: { page: pageNum, pageSize }
+            });
+            const { data, total } = response.data;
+            setWarrantHolders(prev => append ? [...prev, ...data] : data);
+            setHasMore(pageNum * pageSize < total);
+            setLoading(false);
+        } catch (error: any) {
+            console.error('Error loading warrant holders:', error);
+            setError('Ошибка при загрузке ордеродержателей');
+            setLoading(false);
+        }
+    };
 
     useEffect(() => {
-        const fetchWarrantHolders = async () => {
-            try {
-                const response = await axios.get('/api/warrant-holders');
-                setWarrantHolders(response.data);
-                setLoading(false);
-            } catch (error: any) {
-                console.error('Error loading warrant holders:', error);
-                setError('Ошибка при загрузке ордеродержателей');
-                setLoading(false);
-            }
-        };
-        fetchWarrantHolders();
+        setPage(1);
+        fetchWarrantHolders(1);
     }, []);
+
+    useEffect(() => {
+        const handleResize = () => {
+            setIsMobile(window.innerWidth < 768);
+        };
+        window.addEventListener('resize', handleResize);
+        return () => window.removeEventListener('resize', handleResize);
+    }, []);
+
+    useEffect(() => {
+        if (observer.current) observer.current.disconnect();
+
+        observer.current = new IntersectionObserver(entries => {
+            if (entries[0].isIntersecting && hasMore && !loading) {
+                setPage(prev => {
+                    const nextPage = prev + 1;
+                    fetchWarrantHolders(nextPage, true);
+                    return nextPage;
+                });
+            }
+        });
+
+        // Наблюдаем за последним элементом в списке ордеродержателей
+        if (warrantHolders.length > 0) {
+            const lastHolderElement = document.querySelector(`.holder-item-${warrantHolders[warrantHolders.length - 1].id}`);
+            if (lastHolderElement) {
+                observer.current.observe(lastHolderElement);
+            }
+        }
+
+        return () => {
+            if (observer.current) observer.current.disconnect();
+        };
+    }, [hasMore, loading, warrantHolders]);
 
     const handleNewHolderChange = (value: string) => {
         setNewHolderInput(value);
@@ -56,11 +102,8 @@ const WarrantHoldersTable: React.FC = () => {
         }
     };
 
-    if (loading) return <p>Загрузка...</p>;
-
     return (
-        <>
-            <h2 className="text-xl font-bold mb-4">Ордеродержатели</h2>
+        <div className="table-responsive">
             {role === 'admin' && (
                 <div className="mb-4">
                     <form onSubmit={handleAddWarrantHolder} className="flex flex-col gap-2 max-w-md">
@@ -77,29 +120,47 @@ const WarrantHoldersTable: React.FC = () => {
                         >
                             Добавить
                         </button>
-                        {error && <p className="text-red-500">{error}</p>}
                     </form>
                 </div>
             )}
-            <table className="w-full border-collapse">
-                <thead>
-                <tr className="bg-gray-200">
-                    <th className="border p-2">ID</th>
-                    <th className="border p-2">Пользователь</th>
-                    <th className="border p-2">Кошельки</th>
-                    <th className="border p-2">Оферты</th>
-                    {role === 'admin' && <th className="border p-2">Пароль</th>}
-                    <th className="border p-2">Заблокирован</th>
-                    {role === 'admin' && <th className="border p-2">Действия</th>}
-                </tr>
-                </thead>
-                <WarrantHoldersTableBody
-                    warrantHolders={warrantHolders}
-                    role={role}
-                    setWarrantHolders={setWarrantHolders}
-                />
-            </table>
-        </>
+            {warrantHolders.length === 0 && !loading && (
+                <p className="text-center text-gray-500 mt-4">На данный момент тут ничего нет</p>
+            )}
+            {isMobile ? (
+                <div className="card-stack">
+                    <WarrantHoldersTableBody
+                        warrantHolders={warrantHolders}
+                        role={role}
+                        setWarrantHolders={setWarrantHolders}
+                        setError={setError}
+                        isMobile={isMobile}
+                    />
+                </div>
+            ) : (
+                <table className="w-full border-collapse">
+                    <thead>
+                    <tr className="bg-gray-200">
+                        <th className="border p-2">ID</th>
+                        <th className="border p-2">Пользователь</th>
+                        <th className="border p-2">Кошельки</th>
+                        <th className="border p-2">Оферты</th>
+                        {role === 'admin' && <th className="border p-2">Пароль</th>}
+                        <th className="border p-2">Заблокирован</th>
+                        {role === 'admin' && <th className="border p-2">Действия</th>}
+                    </tr>
+                    </thead>
+                    <WarrantHoldersTableBody
+                        warrantHolders={warrantHolders}
+                        role={role}
+                        setWarrantHolders={setWarrantHolders}
+                        setError={setError}
+                        isMobile={isMobile}
+                    />
+                </table>
+            )}
+            {loading && <p className="text-center">Загрузка...</p>}
+            {error && <p className="text-red-500 mt-2">{error}</p>}
+        </div>
     );
 };
 

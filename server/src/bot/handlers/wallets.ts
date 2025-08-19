@@ -123,7 +123,7 @@ export function handleWallets(bot: Telegraf<BotContext>) {
                 [
                     Markup.button.callback('BTC', 'update_wallet_BTC'),
                     Markup.button.callback('LTC', 'update_wallet_LTC'),
-                    Markup.button.callback('USDT', 'update_wallet_USDT'),
+                    Markup.button.callback('USDT TRC20', 'update_wallet_USDT'),
                 ],
                 [Markup.button.callback('Отменить', 'update_wallet_cancel')]
             ])

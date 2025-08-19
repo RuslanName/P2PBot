@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useRef } from 'react';
 import axios from 'axios';
 import { useStore } from '../../store/store';
 import type { Offer, CreateOfferDto } from '../../types';
@@ -8,24 +8,70 @@ import OffersTableBody from './OffersTableBody';
 const OffersTable: React.FC = () => {
   const { role, userId } = useStore();
   const [offers, setOffers] = useState<Offer[]>([]);
-  const [loading, setLoading] = useState(true);
+  const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
   const [statusFilter, setStatusFilter] = useState<string>('open');
+  const [isMobile, setIsMobile] = useState(window.innerWidth < 768);
+  const [, setPage] = useState(1);
+  const [hasMore, setHasMore] = useState(true);
+  const pageSize = 10;
+  const observer = useRef<IntersectionObserver | null>(null);
+
+  const fetchOffers = async (pageNum: number, append: boolean = false) => {
+    setLoading(true);
+    try {
+      const response = await axios.get('/api/offers', {
+        params: { page: pageNum, pageSize }
+      });
+      const { data, total } = response.data;
+      setOffers(prev => append ? [...prev, ...data] : data);
+      setHasMore(pageNum * pageSize < total);
+      setLoading(false);
+    } catch (error) {
+      console.error('Error loading data:', error);
+      setError('Ошибка при загрузке данных');
+      setLoading(false);
+    }
+  };
 
   useEffect(() => {
-    const fetchData = async () => {
-      try {
-        const offersResponse = await axios.get('/api/offers');
-        setOffers(offersResponse.data);
-        setLoading(false);
-      } catch (error) {
-        console.error('Error loading data:', error);
-        setError('Ошибка при загрузке данных');
-        setLoading(false);
-      }
+    setPage(1);
+    fetchOffers(1);
+  }, [statusFilter]);
+
+  useEffect(() => {
+    const handleResize = () => {
+      setIsMobile(window.innerWidth < 768);
     };
-    fetchData();
+    window.addEventListener('resize', handleResize);
+    return () => window.removeEventListener('resize', handleResize);
   }, []);
+
+  useEffect(() => {
+    if (observer.current) observer.current.disconnect();
+
+    observer.current = new IntersectionObserver(entries => {
+      if (entries[0].isIntersecting && hasMore && !loading) {
+        setPage(prev => {
+          const nextPage = prev + 1;
+          fetchOffers(nextPage, true);
+          return nextPage;
+        });
+      }
+    });
+
+    // Наблюдаем за последним элементом в списке оферт
+    if (offers.length > 0) {
+      const lastOfferElement = document.querySelector(`.offer-item-${offers[offers.length - 1].id}`);
+      if (lastOfferElement) {
+        observer.current.observe(lastOfferElement);
+      }
+    }
+
+    return () => {
+      if (observer.current) observer.current.disconnect();
+    };
+  }, [hasMore, loading, offers]);
 
   const handleCreateOffer = async (newOffer: CreateOfferDto) => {
     setError('');
@@ -75,17 +121,17 @@ const OffersTable: React.FC = () => {
       ? offers.filter(offer => statusFilter === 'all' || offer.status === statusFilter)
       : offers.filter(offer => offer.status === 'open' && offer.warrantHolder.id === userId);
 
-  if (loading) return <p>Загрузка...</p>;
-
   return (
-      <>
-        <h2 className="text-xl font-bold mb-4">Оферты</h2>
+      <div className="table-responsive">
         {role === 'admin' && (
             <div className="mb-4">
               <label className="block text-gray-700">Фильтр по статусу</label>
               <select
                   value={statusFilter}
-                  onChange={(e) => setStatusFilter(e.target.value)}
+                  onChange={(e) => {
+                    setStatusFilter(e.target.value);
+                    setOffers([]);
+                  }}
                   className="w-full p-2 border rounded"
               >
                 <option value="all">Все</option>
@@ -98,35 +144,53 @@ const OffersTable: React.FC = () => {
         {role !== 'admin' && (
             <CreateOfferForm onSubmit={handleCreateOffer} />
         )}
-        <table className="w-full border-collapse">
-          <thead>
-          <tr className="bg-gray-200">
-            <th className="border p-2">ID</th>
-            <th className="border p-2">Тип</th>
-            <th className="border p-2">Криптовалюта</th>
-            <th className="border p-2">Фиатная валюта</th>
-            <th className="border p-2">Мин. сумма сделки</th>
-            <th className="border p-2">Макс. сумма сделки</th>
-            <th className="border p-2">Наценка (%)</th>
-            <th className="border p-2">Реквизиты</th>
-            {role === 'admin' && statusFilter === 'all' && <th className="border p-2">Статус</th>}
-            {role === 'admin' && <th className="border p-2">Ордеродержатель</th>}
-            <th className="border p-2">Создано</th>
-            {(role !== 'admin' || statusFilter === 'open' || statusFilter === 'all') && (
-                <th className="border p-2">Действия</th>
-            )}
-          </tr>
-          </thead>
-          <OffersTableBody
-              offers={filteredOffers}
-              role={role}
-              onUpdate={handleUpdateOffer}
-              onClose={handleCloseOffer}
-              statusFilter={statusFilter}
-          />
-        </table>
+        {filteredOffers.length === 0 && !loading && (
+            <p className="text-center text-gray-500 mt-4">На данный момент тут ничего нет</p>
+        )}
+        {isMobile ? (
+            <div className="card-stack">
+              <OffersTableBody
+                  offers={filteredOffers}
+                  role={role}
+                  onUpdate={handleUpdateOffer}
+                  onClose={handleCloseOffer}
+                  statusFilter={statusFilter}
+                  isMobile={isMobile}
+              />
+            </div>
+        ) : (
+            <table className="w-full border-collapse">
+              <thead>
+              <tr className="bg-gray-200">
+                <th className="border p-2">ID</th>
+                <th className="border p-2">Тип</th>
+                <th className="border p-2">Криптовалюта</th>
+                <th className="border p-2">Фиатная валюта</th>
+                <th className="border p-2">Мин. сумма обмена</th>
+                <th className="border p-2">Макс. сумма обмена</th>
+                <th className="border p-2">Наценка (%)</th>
+                <th className="border p-2">Реквизиты</th>
+                {role === 'admin' && statusFilter === 'all' && <th className="border p-2">Статус</th>}
+                {role === 'admin' && <th className="border p-2">Ордеродержатель</th>}
+                <th className="border p-2">Создано</th>
+                {role !== 'admin' || statusFilter === 'open' || statusFilter === 'all' ? (
+                    <th className="border p-2">Действия</th>
+                ) : null}
+              </tr>
+              </thead>
+              <OffersTableBody
+                  offers={filteredOffers}
+                  role={role}
+                  onUpdate={handleUpdateOffer}
+                  onClose={handleCloseOffer}
+                  statusFilter={statusFilter}
+                  isMobile={isMobile}
+              />
+            </table>
+        )}
+        {loading && <p className="text-center">Загрузка...</p>}
         {error && <p className="text-red-500 mt-2">{error}</p>}
-      </>
+      </div>
   );
 };
 

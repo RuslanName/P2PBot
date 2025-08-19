@@ -5,8 +5,10 @@ import {config} from '../config/env';
 import {
     CreateOfferDto,
     CreateWarrantHolderDto,
+    UpdateAmlVerificationDto,
     UpdateDealDto,
     UpdateOfferDto,
+    UpdateSupportTicketDto,
     UpdateUserDto,
     UpdateWarrantHolderDto
 } from '../types';
@@ -70,26 +72,36 @@ export async function checkAuth(token: string | undefined) {
     }
 }
 
-export async function getUsers() {
+export async function getUsers(page: number = 1, pageSize: number = 10) {
+    const skip = (page - 1) * pageSize;
     const users = await prisma.user.findMany({
+        skip,
+        take: pageSize,
         include: {
             wallets: true,
             referrer: { select: { id: true, username: true, isBlocked: true } }
         }
     });
 
-    return Promise.all(users.map(async (user) => {
-        const wallets = await Promise.all(user.wallets.map(async (wallet) => ({
-            ...wallet,
-            heldAmount: await getHeldAmount(user.id, undefined, wallet.coin)
-        })));
-        return {
-            ...user,
-            referralLink: `https://t.me/${config.BOT_NAME}?start=${user.referralLinkId || user.id}`,
-            referralCount: await prisma.user.count({ where: { referrerId: user.id } }),
-            wallets,
-        };
-    }));
+    const total = await prisma.user.count();
+
+    return {
+        data: await Promise.all(users.map(async (user) => {
+            const wallets = await Promise.all(user.wallets.map(async (wallet) => ({
+                ...wallet,
+                heldAmount: await getHeldAmount(user.id, undefined, wallet.coin)
+            })));
+            return {
+                ...user,
+                referralLink: `https://t.me/${config.BOT_NAME}?start=${user.referralLinkId || user.id}`,
+                referralCount: await prisma.user.count({ where: { referrerId: user.id } }),
+                wallets,
+            };
+        })),
+        total,
+        page,
+        pageSize
+    };
 }
 
 export async function updateUser(id: number, data: UpdateUserDto) {
@@ -150,11 +162,15 @@ export async function updateUser(id: number, data: UpdateUserDto) {
     };
 }
 
-export async function getOffers(token: string) {
+export async function getOffers(token: string, page: number = 1, pageSize: number = 10) {
     const decoded = jwt.verify(token, config.JWT_SECRET) as { role: string; id?: number };
     let offers;
+    const skip = (page - 1) * pageSize;
+
     if (decoded.role === 'admin') {
         offers = await prisma.offer.findMany({
+            skip,
+            take: pageSize,
             include: {
                 warrantHolder: true
             },
@@ -172,13 +188,20 @@ export async function getOffers(token: string) {
         }
         offers = await prisma.offer.findMany({
             where: { userId: decoded.id },
+            skip,
+            take: pageSize,
             include: {
                 warrantHolder: true
             },
             orderBy: { createdAt: 'desc' }
         });
     }
-    return offers;
+
+    const total = await prisma.offer.count({
+        where: decoded.role === 'admin' ? {} : { userId: decoded.id }
+    });
+
+    return { data: offers, total, page, pageSize };
 }
 
 export async function createOffer(token: string, data: CreateOfferDto) {
@@ -297,8 +320,11 @@ export async function updateOffer(token: string, id: number, data: UpdateOfferDt
     });
 }
 
-export async function getDeals() {
-    return prisma.deal.findMany({
+export async function getDeals(page: number = 1, pageSize: number = 10) {
+    const skip = (page - 1) * pageSize;
+    const deals = await prisma.deal.findMany({
+        skip,
+        take: pageSize,
         include: {
             client: {
                 select: {
@@ -330,10 +356,15 @@ export async function getDeals() {
             }
         }
     });
+
+    const total = await prisma.deal.count();
+
+    return { data: deals, total, page, pageSize };
 }
 
-export async function getDealsFiltered(params: { userId?: number; warrantHolderId?: number; status?: string; offerType?: string }) {
-    return prisma.deal.findMany({
+export async function getDealsFiltered(params: { userId?: number; warrantHolderId?: number; status?: string; offerType?: string }, page: number = 1, pageSize: number = 10) {
+    const skip = (page - 1) * pageSize;
+    const deals = await prisma.deal.findMany({
         where: {
             userId: params.userId,
             status: params.status,
@@ -342,11 +373,26 @@ export async function getDealsFiltered(params: { userId?: number; warrantHolderI
                 userId: params.warrantHolderId,
             },
         },
+        skip,
+        take: pageSize,
         include: {
             client: { select: { id: true, username: true, isBlocked: true } },
             offer: { select: { id: true, type: true, coin: true, status: true, userId: true } },
         },
     });
+
+    const total = await prisma.deal.count({
+        where: {
+            userId: params.userId,
+            status: params.status,
+            offer: {
+                type: params.offerType,
+                userId: params.warrantHolderId,
+            },
+        }
+    });
+
+    return { data: deals, total, page, pageSize };
 }
 
 export async function updateDeal(dealId: number, data: UpdateDealDto = {}) {
@@ -434,9 +480,12 @@ export async function updateDeal(dealId: number, data: UpdateDealDto = {}) {
     });
 }
 
-export async function getWarrantHolders(role: string, warrantHolderId?: number) {
+export async function getWarrantHolders(role: string, warrantHolderId?: number, page: number = 1, pageSize: number = 10) {
+    const skip = (page - 1) * pageSize;
     const warrantHolders = await prisma.warrantHolder.findMany({
         where: role === 'admin' ? {} : { id: warrantHolderId },
+        skip,
+        take: pageSize,
         include: {
             user: {
                 select: {
@@ -456,21 +505,30 @@ export async function getWarrantHolders(role: string, warrantHolderId?: number) 
         }
     });
 
-    return Promise.all(warrantHolders.map(async (holder) => {
-        const wallets = await Promise.all(holder.user.wallets.map(async (wallet) => ({
-            ...wallet,
-            heldAmount: await getHeldAmount(
-                holder.user.id,
-                role === 'admin' ? holder.id : undefined,
-                wallet.coin
-            )
-        })));
-        return {
-            ...holder,
-            username: holder.user.username,
-            wallets,
-        };
-    }));
+    const total = await prisma.warrantHolder.count({
+        where: role === 'admin' ? {} : { id: warrantHolderId }
+    });
+
+    return {
+        data: await Promise.all(warrantHolders.map(async (holder) => {
+            const wallets = await Promise.all(holder.user.wallets.map(async (wallet) => ({
+                ...wallet,
+                heldAmount: await getHeldAmount(
+                    holder.user.id,
+                    role === 'admin' ? holder.id : undefined,
+                    wallet.coin
+                )
+            })));
+            return {
+                ...holder,
+                username: holder.user.username,
+                wallets,
+            };
+        })),
+        total,
+        page,
+        pageSize
+    };
 }
 
 export async function createWarrantHolder(data: CreateWarrantHolderDto) {
@@ -490,7 +548,9 @@ export async function createWarrantHolder(data: CreateWarrantHolderDto) {
     });
 
     if (!user) {
-        return;
+        const error = new Error('User not found');
+        (error as any).status = 404;
+        throw error;
     }
 
     const existingHolder = await prisma.warrantHolder.findUnique({
@@ -605,6 +665,76 @@ export async function updateWarrantHolder(id: number, data: UpdateWarrantHolderD
         username: updatedWarrantHolder.user.username,
         wallets,
     };
+}
+
+export async function getSupportTickets(page: number = 1, pageSize: number = 10) {
+    const skip = (page - 1) * pageSize;
+    const tickets = await prisma.supportTicket.findMany({
+        skip,
+        take: pageSize,
+        include: {
+            user: {select: {id: true, username: true, isBlocked: true}}
+        },
+        orderBy: {createdAt: 'desc'}
+    });
+
+    const total = await prisma.supportTicket.count();
+
+    return { data: tickets, total, page, pageSize };
+}
+
+export async function updateSupportTicket(id: number, data: UpdateSupportTicketDto) {
+    const ticket = await prisma.supportTicket.findUnique({
+        where: { id },
+        include: { user: { select: { id: true, username: true, isBlocked: true } } }
+    });
+
+    if (!ticket) {
+        const error = new Error('Support ticket not found');
+        (error as any).status = 404;
+        throw error;
+    }
+
+    return prisma.supportTicket.update({
+        where: {id},
+        data: {status: data.status},
+        include: {user: {select: {id: true, username: true, isBlocked: true}}}
+    });
+}
+
+export async function getAmlVerifications(page: number = 1, pageSize: number = 10) {
+    const skip = (page - 1) * pageSize;
+    const verifications = await prisma.amlVerification.findMany({
+        skip,
+        take: pageSize,
+        include: {
+            user: {select: {id: true, username: true, isBlocked: true}}
+        },
+        orderBy: {createdAt: 'desc'}
+    });
+
+    const total = await prisma.amlVerification.count();
+
+    return { data: verifications, total, page, pageSize };
+}
+
+export async function updateAmlVerification(id: number, data: UpdateAmlVerificationDto) {
+    const verification = await prisma.amlVerification.findUnique({
+        where: { id },
+        include: { user: { select: { id: true, username: true, isBlocked: true } } }
+    });
+
+    if (!verification) {
+        const error = new Error('AML verification not found');
+        (error as any).status = 404;
+        throw error;
+    }
+
+    return prisma.amlVerification.update({
+        where: {id},
+        data: {status: data.status},
+        include: {user: {select: {id: true, username: true, isBlocked: true}}}
+    });
 }
 
 export async function getHeldAmount(userId: number, warrantHolderId?: number, coin?: string) {

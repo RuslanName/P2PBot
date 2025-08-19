@@ -14,6 +14,14 @@ export interface BotState {
     amount?: number;
     paymentDetails?: string;
     withdrawAmount?: number;
+    support?: {
+        category?: string;
+        subCategory?: string;
+        description?: string;
+        images?: string[];
+        ticketId?: number;
+    };
+    amlVerificationId?: number;
 }
 
 export interface CreateOfferDto {
@@ -51,4 +59,12 @@ export interface UpdateWarrantHolderDto {
 
 export interface UpdateUserDto {
     isBlocked?: boolean;
+}
+
+export interface UpdateSupportTicketDto {
+    status?: string;
+}
+
+export interface UpdateAmlVerificationDto {
+    status?: string;
 }

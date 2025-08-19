@@ -25,7 +25,7 @@ export function handleReferral(bot: Telegraf<BotContext>) {
             `🔗 *Реферальная ссылка*`,
             referralLink,
             `Приглашено: ${user.referrals.length}`,
-            `Процент со сделок: ${config.REFERRAL_REVENUE_PERCENT}%`
+            `Процент со обменов: ${config.REFERRAL_REVENUE_PERCENT}%`
         ];
 
         const shareText = '💎 Присоединяйтесь к нашему P2P боту!';

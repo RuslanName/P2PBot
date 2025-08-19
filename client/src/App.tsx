@@ -5,11 +5,15 @@ import UsersTable from './components/usersTable/UsersTable.tsx';
 import OffersTable from './components/offersTable/OffersTable.tsx';
 import DealsTable from './components/dealsTable/DealsTable.tsx';
 import WarrantHoldersTable from './components/warrantHoldersTable/WarrantHoldersTable.tsx';
+import SupportTicketsTable from './components/supportTicketsTable/SupportTicketsTable.tsx';
+import AmlVerificationsTable from './components/amlVerificationsTable/AmlVerificationsTable.tsx';
 import Login from './components/Login';
 
 const App: React.FC = () => {
     const { isAuthenticated, role } = useStore();
-    const [activeTab, setActiveTab] = useState<'users' | 'offers' | 'deals' | 'warrant-holders'>('offers');
+    const [activeTab, setActiveTab] = useState<'users' | 'offers' | 'deals' | 'warrant-holders' | 'support-tickets' | 'aml-verifications'>('offers');
+    const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(true);
+    const [isSidebarOpen, setIsSidebarOpen] = useState(false);
 
     useEffect(() => {
         if (isAuthenticated) {
@@ -32,6 +36,10 @@ const App: React.FC = () => {
                     return <DealsTable />;
                 case 'warrant-holders':
                     return <WarrantHoldersTable />;
+                case 'support-tickets':
+                    return <SupportTicketsTable />;
+                case 'aml-verifications':
+                    return <AmlVerificationsTable />;
                 default:
                     return <UsersTable />;
             }
@@ -48,9 +56,17 @@ const App: React.FC = () => {
     };
 
     return (
-        <div className="flex">
-            <Sidebar activeTab={activeTab} setActiveTab={setActiveTab} role={role} />
-            <div className="flex-1 p-4">
+        <div className="flex min-h-screen">
+            <Sidebar
+                activeTab={activeTab}
+                setActiveTab={setActiveTab}
+                role={role}
+                isCollapsed={isSidebarCollapsed}
+                setIsCollapsed={setIsSidebarCollapsed}
+                isOpen={isSidebarOpen}
+                setIsOpen={setIsSidebarOpen}
+            />
+            <div className="flex-1 p-4 transition-all duration-300">
                 {renderContent()}
             </div>
         </div>

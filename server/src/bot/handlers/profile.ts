@@ -30,7 +30,7 @@ export function handleProfile(bot: Telegraf<BotContext>) {
             `ID: ${user.chatId}`,
             `Фиатная валюта: ${user.fiatCurrency}`,
             `Количество рефералов: ${user.referrals.length}`,
-            `Количество сделок: ${completedDealsCount}`,
+            `Количество обменов: ${completedDealsCount}`,
             `Дата регистрации: ${user.createdAt.toLocaleDateString('ru-RU')}`,
             `\n💸 *Кошельки*`,
             ...user.wallets.map(wallet =>
@@ -72,7 +72,7 @@ export function handleProfile(bot: Telegraf<BotContext>) {
             `ID: ${user.chatId}`,
             `Фиатная валюта: ${user.fiatCurrency}`,
             `Количество рефералов: ${user.referrals.length}`,
-            `Количество сделок: ${completedDealsCount}`,
+            `Количество обменов: ${completedDealsCount}`,
             `Дата регистрации: ${user.createdAt.toLocaleDateString('ru-RU')}`,
             `\n💸 *Кошельки*`,
             ...user.wallets.map(wallet =>

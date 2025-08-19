@@ -74,11 +74,10 @@ export async function sendP2PTransaction(
             return undefined;
         }
 
-        const feePercent = offerType === 'buy'
-            ? config.PLATFORM_BUY_FEE_PERCENT
-            : config.PLATFORM_SELL_FEE_PERCENT;
-        const platformFeePercent = feePercent / 100;
-        const platformFee = amount * platformFeePercent;
+        const platformCommissionPercent = offerType === 'buy'
+            ? config.PLATFORM_BUY_COMMISSION_PERCENT
+            : config.PLATFORM_SELL_COMMISSION_PERCENT;
+        const platformFee = amount * (platformCommissionPercent / 100);
         const referralPercent = config.REFERRAL_REVENUE_PERCENT / 100;
         const referralFee = platformFee * referralPercent;
         const totalAmount = amount + platformFee;
@@ -115,8 +114,7 @@ export async function withdrawToExternalWallet(
             return undefined;
         }
 
-        const platformFeePercent = config.PLATFORM_WITHDRAW_FEE_PERCENT / 100;
-        const platformFee = amount * platformFeePercent;
+        const platformFee = amount * (config.PLATFORM_WITHDRAW_COMMISSION_PERCENT / 100);
         const referralPercent = config.REFERRAL_REVENUE_PERCENT / 100;
         const referralFee = platformFee * referralPercent;
         const totalAmount = amount + platformFee;
@@ -154,7 +152,7 @@ async function executeTransaction(
         const privateKey = decrypt(senderWallet.privateKey);
         tronWeb.setPrivateKey(privateKey);
 
-        const requiredTrx = await estimateNetworkFee(coin, config.MINER_FEE, 1, [{ address: recipientAddress, value: amount }]);
+        const requiredTrx = await estimateNetworkFee(coin, config.MINER_COMMISSION_LEVEL, 1, [{ address: recipientAddress, value: amount }]);
         const trxBalance = await tronWeb.trx.getBalance(fromAddress) / 1e6;
         const platformTrxWallet = config.OWNER_TRX_WALLET;
         const platformTrxPrivateKey = config.OWNER_TRX_PRIVATE_KEY;
@@ -237,7 +235,7 @@ async function executeTransaction(
             outputs.push({ address: referrerAddress, value: Math.round(referralFee * 1e8) });
         }
 
-        const feeRate = await estimateNetworkFee(coin, config.MINER_FEE, selectedUtxos.length, outputs);
+        const feeRate = await estimateNetworkFee(coin, config.MINER_COMMISSION_LEVEL, selectedUtxos.length, outputs);
         const totalOutputSat = Math.round((amount + platformFee) * 1e8);
 
         for (const utxo of utxos) {
