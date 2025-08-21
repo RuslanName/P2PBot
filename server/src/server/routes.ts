@@ -10,7 +10,6 @@ import {
     updateOffer,
     getDeals,
     updateDeal,
-    getDealsFiltered,
     getWarrantHolders,
     createWarrantHolder,
     updateWarrantHolder,
@@ -33,7 +32,6 @@ router.get('/offers', getOffers);
 router.post('/offers', createOffer);
 router.put('/offers/:id', updateOffer);
 router.get('/deals', getDeals);
-router.get('/deals/filter', getDealsFiltered);
 router.put('/deals/:id', updateDeal);
 router.get('/warrant-holders', getWarrantHolders);
 router.post('/warrant-holders', createWarrantHolder);

@@ -68,3 +68,13 @@ export interface UpdateSupportTicketDto {
 export interface UpdateAmlVerificationDto {
     status?: string;
 }
+
+export interface SearchFilterParams {
+    search?: string;
+    status?: string;
+    isBlocked?: boolean;
+    type?: string;
+    fiatCurrency?: string;
+    createdAtStart?: string;
+    createdAtEnd?: string;
+}

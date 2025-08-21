@@ -113,7 +113,7 @@ model AmlVerification {
   reason                 String
   verificationImagesPath String[]
   status                 String   @default("open")
-  createdAt              DateTime @default(now())
+  createdAt              DateTime @default(now())1
 
   @@map("aml_verifications")
 }

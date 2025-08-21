@@ -7,7 +7,7 @@ import {
     UpdateUserDto,
     UpdateDealDto,
     UpdateSupportTicketDto,
-    UpdateAmlVerificationDto
+    UpdateAmlVerificationDto, SearchFilterParams
 } from '../types';
 
 export async function login(req: Request, res: Response) {
@@ -44,11 +44,19 @@ export async function checkAuth(req: Request, res: Response) {
 export async function getUsers(req: Request, res: Response) {
     const page = parseInt(req.query.page as string) || 1;
     const pageSize = parseInt(req.query.pageSize as string) || 10;
+    const search = (req.query.search as string)?.replace(/[^a-zA-Z0-9\s]/g, '');
+    const params: SearchFilterParams = {
+        search: search || undefined,
+        isBlocked: req.query.isBlocked === 'true' ? true : req.query.isBlocked === 'false' ? false : undefined,
+        createdAtStart: req.query.createdAtStart as string,
+        createdAtEnd: req.query.createdAtEnd as string
+    };
     try {
-        const result = await services.getUsers(page, pageSize);
+        const result = await services.getUsers(page, pageSize, params);
         res.json(result);
     } catch (error: any) {
-        res.status(500).json({ error: 'Failed to fetch usersTable' });
+        console.error('Error fetching users:', error);
+        res.status(400).json({ error: 'Некорректный запрос поиска. Проверьте параметры.' });
     }
 }
 
@@ -67,11 +75,21 @@ export async function getOffers(req: Request, res: Response) {
     const token = req.cookies.token;
     const page = parseInt(req.query.page as string) || 1;
     const pageSize = parseInt(req.query.pageSize as string) || 10;
+    const search = (req.query.search as string)?.replace(/[^a-zA-Z0-9\s]/g, '');
+    const params: SearchFilterParams = {
+        search: search || undefined,
+        status: req.query.status as string,
+        type: req.query.type as string,
+        fiatCurrency: req.query.fiatCurrency as string,
+        createdAtStart: req.query.createdAtStart as string,
+        createdAtEnd: req.query.createdAtEnd as string
+    };
     try {
-        const result = await services.getOffers(token, page, pageSize);
+        const result = await services.getOffers(token, page, pageSize, params);
         res.json(result);
     } catch (error: any) {
-        res.status(500).json({ error: 'Failed to fetch offersTable' });
+        console.error('Error fetching offers:', error);
+        res.status(400).json({ error: 'Некорректный запрос поиска. Проверьте параметры.' });
     }
 }
 
@@ -106,24 +124,22 @@ export async function updateOffer(req: Request, res: Response) {
 }
 
 export async function getDeals(req: Request, res: Response) {
+    const token = req.cookies.token;
     const page = parseInt(req.query.page as string) || 1;
     const pageSize = parseInt(req.query.pageSize as string) || 10;
+    const search = (req.query.search as string)?.replace(/[^a-zA-Z0-9\s]/g, '');
+    const params: SearchFilterParams = {
+        search: search || undefined,
+        status: req.query.status as string,
+        createdAtStart: req.query.createdAtStart as string,
+        createdAtEnd: req.query.createdAtEnd as string
+    };
     try {
-        const result = await services.getDeals(page, pageSize);
+        const result = await services.getDeals(token, page, pageSize, params);
         res.json(result);
     } catch (error: any) {
-        res.status(500).json({ error: 'Failed to fetch dealsTable' });
-    }
-}
-
-export async function getDealsFiltered(req: Request, res: Response) {
-    const page = parseInt(req.query.page as string) || 1;
-    const pageSize = parseInt(req.query.pageSize as string) || 10;
-    try {
-        const result = await services.getDealsFiltered(req.query, page, pageSize);
-        res.json(result);
-    } catch (error: any) {
-        res.status(500).json({ error: 'Failed to fetch dealsTable' });
+        console.error('Error fetching deals:', error);
+        res.status(400).json({ error: 'Некорректный запрос поиска. Проверьте параметры.' });
     }
 }
 
@@ -142,12 +158,20 @@ export async function getWarrantHolders(req: Request, res: Response) {
     const token = req.cookies.token;
     const page = parseInt(req.query.page as string) || 1;
     const pageSize = parseInt(req.query.pageSize as string) || 10;
-    const { role, id } = (await services.checkAuth(token)) || {};
+    const search = (req.query.search as string)?.replace(/[^a-zA-Z0-9\s]/g, '');
+    const params: SearchFilterParams = {
+        search: search || undefined,
+        isBlocked: req.query.isBlocked === 'true' ? true : req.query.isBlocked === 'false' ? false : undefined,
+        createdAtStart: req.query.createdAtStart as string,
+        createdAtEnd: req.query.createdAtEnd as string
+    };
     try {
-        const result = await services.getWarrantHolders(role || '', id, page, pageSize);
+        const { role, id } = (await services.checkAuth(token)) || {};
+        const result = await services.getWarrantHolders(role || '', id, page, pageSize, params);
         res.json(result);
     } catch (error: any) {
-        res.status(500).json({ error: 'Failed to fetch warrant holders' });
+        console.error('Error fetching warrant holders:', error);
+        res.status(400).json({ error: 'Некорректный запрос поиска. Проверьте параметры.' });
     }
 }
 
@@ -175,11 +199,19 @@ export async function updateWarrantHolder(req: Request, res: Response) {
 export async function getSupportTickets(req: Request, res: Response) {
     const page = parseInt(req.query.page as string) || 1;
     const pageSize = parseInt(req.query.pageSize as string) || 10;
+    const search = (req.query.search as string)?.replace(/[^a-zA-Z0-9\s]/g, '');
+    const params: SearchFilterParams = {
+        search: search || undefined,
+        status: req.query.status as string,
+        createdAtStart: req.query.createdAtStart as string,
+        createdAtEnd: req.query.createdAtEnd as string
+    };
     try {
-        const result = await services.getSupportTickets(page, pageSize);
+        const result = await services.getSupportTickets(page, pageSize, params);
         res.json(result);
     } catch (error: any) {
-        res.status(500).json({ error: 'Failed to fetch support tickets' });
+        console.error('Error fetching support tickets:', error);
+        res.status(400).json({ error: 'Некорректный запрос поиска. Проверьте параметры.' });
     }
 }
 
@@ -197,11 +229,19 @@ export async function updateSupportTicket(req: Request, res: Response) {
 export async function getAmlVerifications(req: Request, res: Response) {
     const page = parseInt(req.query.page as string) || 1;
     const pageSize = parseInt(req.query.pageSize as string) || 10;
+    const search = (req.query.search as string)?.replace(/[^a-zA-Z0-9\s]/g, '');
+    const params: SearchFilterParams = {
+        search: search || undefined,
+        status: req.query.status as string,
+        createdAtStart: req.query.createdAtStart as string,
+        createdAtEnd: req.query.createdAtEnd as string
+    };
     try {
-        const result = await services.getAmlVerifications(page, pageSize);
+        const result = await services.getAmlVerifications(page, pageSize, params);
         res.json(result);
     } catch (error: any) {
-        res.status(500).json({ error: 'Failed to fetch AML verifications' });
+        console.error('Error fetching AML verifications:', error);
+        res.status(400).json({ error: 'Некорректный запрос поиска. Проверьте параметры.' });
     }
 }
 

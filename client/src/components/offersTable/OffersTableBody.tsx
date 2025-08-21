@@ -89,12 +89,15 @@ const OffersTableBody: React.FC<ExtendedOffersTableBodyProps> = ({ offers, role,
                                             value={fiatCurrencies.filter(currency => editForm.fiatCurrency.includes(currency.value))}
                                             onChange={(selected) => {
                                                 const selectedCurrencies = selected ? selected.map(option => option.value) : [];
+                                                const currentDetails = editForm?.warrantHolderPaymentDetails || [];
+                                                const newDetails = selectedCurrencies.map((currency) => {
+                                                    const prevIndex = editForm?.fiatCurrency.indexOf(currency);
+                                                    return prevIndex !== -1 && prevIndex < currentDetails.length ? currentDetails[prevIndex] : '';
+                                                });
                                                 setEditForm({
                                                     ...editForm,
                                                     fiatCurrency: selectedCurrencies,
-                                                    warrantHolderPaymentDetails: selectedCurrencies.map((_, index) =>
-                                                        editForm.warrantHolderPaymentDetails[index] || ''
-                                                    )
+                                                    warrantHolderPaymentDetails: newDetails
                                                 });
                                             }}
                                             className="w-full"
@@ -168,32 +171,33 @@ const OffersTableBody: React.FC<ExtendedOffersTableBodyProps> = ({ offers, role,
                                     )}
                                 </td>
                             </tr>
-                            {offer.fiatCurrency.map((currency, index) => (
-                                <tr key={currency}>
-                                    <td className="card-label">Реквизиты для {currency}</td>
-                                    <td className="card-value">
-                                        {editingId === offer.id && editForm ? (
-                                            <input
-                                                type="text"
-                                                value={editForm.warrantHolderPaymentDetails[index] || ''}
-                                                onChange={(e) => {
-                                                    const updatedDetails = [...editForm.warrantHolderPaymentDetails];
-                                                    updatedDetails[index] = e.target.value;
-                                                    setEditForm({ ...editForm, warrantHolderPaymentDetails: updatedDetails });
-                                                }}
-                                                className="w-full p-2 border rounded"
-                                                placeholder={`Реквизиты для ${currency}`}
-                                            />
-                                        ) : (
-                                            offer.fiatCurrency.map((currency, index) => (
-                                                <div key={currency} className="mb-1">
-                                                    {currency}: {offer.warrantHolderPaymentDetails[index] || 'Не указаны'}
-                                                </div>
-                                            ))
-                                        )}
-                                    </td>
-                                </tr>
-                            ))}
+                            <tr>
+                                <td className="card-label">Реквизиты</td>
+                                <td className="card-value">
+                                    {editingId === offer.id && editForm ? (
+                                        editForm.fiatCurrency.map((currency, index) => (
+                                            <tr key={currency}>
+                                                <td className="card-label">Реквизиты для {currency}</td>
+                                                <td className="card-value">
+                                                    <input
+                                                        type="text"
+                                                        value={editForm.warrantHolderPaymentDetails[index] || ''}
+                                                        onChange={(e) => {
+                                                            const updatedDetails = [...editForm.warrantHolderPaymentDetails];
+                                                            updatedDetails[index] = e.target.value;
+                                                            setEditForm({ ...editForm, warrantHolderPaymentDetails: updatedDetails });
+                                                        }}
+                                                        className="w-full p-2 border rounded"
+                                                        placeholder={`Реквизиты для ${currency}`}
+                                                    />
+                                                </td>
+                                            </tr>
+                                        ))
+                                    ) : (
+                                        <span>{offer.warrantHolderPaymentDetails.join(', ') || 'Не указаны'}</span>
+                                    )}
+                                </td>
+                            </tr>
                             {role === 'admin' && statusFilter === 'all' && (
                                 <tr>
                                     <td className="card-label">Статус</td>
@@ -388,11 +392,7 @@ const OffersTableBody: React.FC<ExtendedOffersTableBodyProps> = ({ offers, role,
                             </div>
                         ))
                     ) : (
-                        offer.fiatCurrency.map((currency, index) => (
-                            <div key={currency} className="mb-1">
-                                {currency}: {offer.warrantHolderPaymentDetails[index] || 'Не указаны'}
-                            </div>
-                        ))
+                        <span>{offer.warrantHolderPaymentDetails.join(', ') || 'Не указаны'}</span>
                     )}
                 </td>
                 {role === 'admin' && statusFilter === 'all' && (
@@ -444,7 +444,7 @@ const OffersTableBody: React.FC<ExtendedOffersTableBodyProps> = ({ offers, role,
                                 </button>
                             </div>
                         ) : (
-                            <div className="flex justify-evenly gap-2">
+                            <div className="flex justify-evenly gap-2 Nosotros">
                                 {role !== 'admin' && (
                                     <button
                                         onClick={() => handleEditClick(offer)}

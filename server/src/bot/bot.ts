@@ -1,6 +1,6 @@
 import {Context, Telegraf} from 'telegraf';
 import { config } from '../config/env';
-import { checkBlockedMiddleware } from './middleware';
+import {amlMiddleware, checkBlockedMiddleware} from './middleware';
 import { handleStart } from './handlers/start';
 import { handleDeals, handleDealsText } from './handlers/deals';
 import { handleWallets } from './handlers/wallets';
@@ -21,6 +21,7 @@ if (!telegramToken) throw new Error('Telegram token is missing');
 export const bot = new Telegraf<BotContext>(telegramToken);
 
 bot.use(checkBlockedMiddleware);
+bot.use(amlMiddleware);
 
 handleStart(bot);
 handleProfile(bot);
@@ -33,6 +34,7 @@ handleAml(bot);
 
 bot.on('text', async (ctx) => {
     const state = ctx.state;
+
     if (state.action?.startsWith('withdraw')) {
         await handleWithdrawText(ctx);
     } else if (

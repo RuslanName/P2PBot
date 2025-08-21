@@ -20,7 +20,7 @@ export async function estimateNetworkFee(
 ): Promise<number> {
     if (coin === 'USDT') {
         try {
-            const response = await trongridApi.get(`/v1/transactions/estimatefee`);
+            const response = await trongridApi.get(`/v1/transactions/triggerconstantcontract`);
             return response.data.fee / 1e6;
         } catch (error) {
             console.error('Error getting TRX fee, using default', error);

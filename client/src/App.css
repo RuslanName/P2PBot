@@ -52,11 +52,11 @@ body {
 }
 
 .card-stack {
-  @apply md:hidden space-y-4;
+  @apply md:hidden flex flex-col space-y-6;
 }
 
-.card-stack > div {
-  @apply bg-white rounded-lg shadow-md border border-gray-200;
+.card-stack-item + .card-stack-item {
+  @apply mt-4 border-t border-gray-300 pt-4;
 }
 
 .card-stack .vertical-table {
@@ -64,21 +64,21 @@ body {
 }
 
 .card-stack .vertical-table tr {
-  @apply border-none;
+  @apply border-b border-gray-200 last:border-b-0;
 }
 
 .card-stack .vertical-table td {
-  @apply p-1 text-sm text-center;
+  @apply p-2 text-sm;
 }
 
 .card-stack .vertical-table .card-label {
-  @apply font-semibold text-gray-700 w-1/3;
+  @apply font-semibold text-gray-700 w-1/3 pr-2;
 }
 
 .card-stack .vertical-table .card-value {
   @apply text-gray-900 w-2/3;
   word-break: break-word;
-  max-width: 200px;
+  max-width: 100%;
 }
 
 .card-stack .wallets {

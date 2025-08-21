@@ -4,7 +4,7 @@ import {v4 as uuidv4} from 'uuid';
 import {config} from '../config/env';
 import {
     CreateOfferDto,
-    CreateWarrantHolderDto,
+    CreateWarrantHolderDto, SearchFilterParams,
     UpdateAmlVerificationDto,
     UpdateDealDto,
     UpdateOfferDto,
@@ -72,9 +72,45 @@ export async function checkAuth(token: string | undefined) {
     }
 }
 
-export async function getUsers(page: number = 1, pageSize: number = 10) {
+export async function getUsers(page: number = 1, pageSize: number = 10, params: SearchFilterParams = {}) {
     const skip = (page - 1) * pageSize;
+    const where: any = {};
+
+    if (params.search) {
+        const search = params.search.toLowerCase();
+        const isNumericSearch = !isNaN(Number(search));
+
+        let possibleIds: number[] = [];
+        if (isNumericSearch) {
+            possibleIds = await prisma.$queryRaw`
+                SELECT id
+                FROM users
+                WHERE CAST(id AS TEXT) ILIKE ${`%${search}%`}
+            `.then((results: any[]) => results.map((r: any) => r.id));
+        }
+
+        where.OR = [
+            ...(isNumericSearch && possibleIds.length > 0 ? [{ id: { in: possibleIds } }] : []),
+            { chatId: { contains: search, mode: 'insensitive' } },
+            { username: { contains: search, mode: 'insensitive' } },
+            { firstName: { contains: search, mode: 'insensitive' } },
+            { lastName: { contains: search, mode: 'insensitive' } }
+        ];
+    }
+    if (params.isBlocked !== undefined) where.isBlocked = params.isBlocked;
+
+    if (params.createdAtStart || params.createdAtEnd) {
+        where.createdAt = {};
+        if (params.createdAtStart) {
+            where.createdAt.gte = new Date(params.createdAtStart);
+        }
+        if (params.createdAtEnd) {
+            where.createdAt.lte = new Date(params.createdAtEnd);
+        }
+    }
+
     const users = await prisma.user.findMany({
+        where,
         skip,
         take: pageSize,
         include: {
@@ -83,7 +119,7 @@ export async function getUsers(page: number = 1, pageSize: number = 10) {
         }
     });
 
-    const total = await prisma.user.count();
+    const total = await prisma.user.count({ where });
 
     return {
         data: await Promise.all(users.map(async (user) => {
@@ -162,44 +198,36 @@ export async function updateUser(id: number, data: UpdateUserDto) {
     };
 }
 
-export async function getOffers(token: string, page: number = 1, pageSize: number = 10) {
+export async function getOffers(token: string, page: number, pageSize: number, params: SearchFilterParams) {
     const decoded = jwt.verify(token, config.JWT_SECRET) as { role: string; id?: number };
-    let offers;
     const skip = (page - 1) * pageSize;
 
-    if (decoded.role === 'admin') {
-        offers = await prisma.offer.findMany({
-            skip,
-            take: pageSize,
-            include: {
-                warrantHolder: true
-            },
-            orderBy: { createdAt: 'desc' }
-        });
-    } else {
-        if (!decoded.id) throw new Error('User ID not found');
-        const warrantHolder = await prisma.warrantHolder.findUnique({
-            where: { id: decoded.id }
-        });
-        if (warrantHolder?.isBlocked) {
-            const error = new Error('Account is blocked');
-            (error as any).status = 403;
-            throw error;
-        }
-        offers = await prisma.offer.findMany({
-            where: { userId: decoded.id },
-            skip,
-            take: pageSize,
-            include: {
-                warrantHolder: true
-            },
-            orderBy: { createdAt: 'desc' }
-        });
+    const where: any = {};
+    if (params.search) {
+        where.OR = [
+            { id: { equals: parseInt(params.search) || 0 } },
+            { warrantHolder: { user: { username: { contains: params.search } } } }
+        ];
+    }
+    if (params.status && params.status !== 'all') where.status = params.status;
+    if (params.type && params.type !== 'all') where.type = params.type;
+    if (params.fiatCurrency && params.fiatCurrency !== 'all') where.fiatCurrency = { has: params.fiatCurrency };
+    if (params.createdAtStart) where.createdAt = { ...where.createdAt, gte: new Date(params.createdAtStart) };
+    if (params.createdAtEnd) where.createdAt = { ...where.createdAt, lte: new Date(params.createdAtEnd) };
+
+    if (decoded.role !== 'admin' && decoded.id) {
+        where.warrantHolder = { id: decoded.id };
     }
 
-    const total = await prisma.offer.count({
-        where: decoded.role === 'admin' ? {} : { userId: decoded.id }
+    const offers = await prisma.offer.findMany({
+        where,
+        skip,
+        take: pageSize,
+        include: { warrantHolder: { include: { user: { select: { id: true, username: true, isBlocked: true } } } } },
+        orderBy: { createdAt: 'desc' }
     });
+
+    const total = await prisma.offer.count({ where });
 
     return { data: offers, total, page, pageSize };
 }
@@ -243,6 +271,16 @@ export async function createOffer(token: string, data: CreateOfferDto) {
     });
     if (warrantHolder?.isBlocked) {
         const error = new Error('Account is blocked');
+        (error as any).status = 403;
+        throw error;
+    }
+
+    const existingOffersCount = await prisma.offer.count({
+        where: { userId: decoded.id }
+    });
+
+    if (existingOffersCount >= config.LIMIT_CREATE_OFFERS) {
+        const error = new Error(`Cannot create more than ${config.LIMIT_CREATE_OFFERS} offers`);
         (error as any).status = 403;
         throw error;
     }
@@ -320,77 +358,58 @@ export async function updateOffer(token: string, id: number, data: UpdateOfferDt
     });
 }
 
-export async function getDeals(page: number = 1, pageSize: number = 10) {
+export async function getDeals(token: string, page: number = 1, pageSize: number = 10, params: SearchFilterParams = {}) {
+    const decoded = jwt.verify(token, config.JWT_SECRET) as { role: string; id?: number };
     const skip = (page - 1) * pageSize;
+    const where: any = {};
+
+    if (params.search) {
+        const search = params.search.toLowerCase();
+        const isNumericSearch = !isNaN(Number(search));
+
+        let possibleIds: number[] = [];
+        if (isNumericSearch) {
+            possibleIds = await prisma.$queryRaw`
+                SELECT id
+                FROM deals
+                WHERE CAST(id AS TEXT) ILIKE ${`%${search}%`}
+            `.then((results: any[]) => results.map((r: any) => r.id));
+        }
+
+        where.OR = [
+            ...(isNumericSearch && possibleIds.length > 0 ? [{ id: { in: possibleIds } }] : []),
+            { client: { username: { contains: search, mode: 'insensitive' } } },
+            { offer: { coin: { contains: search, mode: 'insensitive' } } }
+        ];
+    }
+    if (params.status && params.status !== 'all') where.status = params.status;
+
+    if (params.createdAtStart || params.createdAtEnd) {
+        where.createdAt = {};
+        if (params.createdAtStart) {
+            where.createdAt.gte = new Date(params.createdAtStart);
+        }
+        if (params.createdAtEnd) {
+            where.createdAt.lte = new Date(params.createdAtEnd);
+        }
+    }
+
+    if (decoded.role !== 'admin' && decoded.id) {
+        where.offer = { warrantHolder: { id: decoded.id } };
+    }
+
     const deals = await prisma.deal.findMany({
+        where,
         skip,
         take: pageSize,
         include: {
-            client: {
-                select: {
-                    id: true,
-                    username: true,
-                    isBlocked: true,
-                    referrer: {
-                        select: {
-                            id: true,
-                            username: true,
-                            isBlocked: true
-                        }
-                    }
-                }
-            },
-            offer: {
-                select: {
-                    id: true,
-                    type: true,
-                    coin: true,
-                    status: true,
-                    warrantHolder: {
-                        select: {
-                            id: true,
-                            isBlocked: true
-                        }
-                    }
-                }
-            }
-        }
-    });
-
-    const total = await prisma.deal.count();
-
-    return { data: deals, total, page, pageSize };
-}
-
-export async function getDealsFiltered(params: { userId?: number; warrantHolderId?: number; status?: string; offerType?: string }, page: number = 1, pageSize: number = 10) {
-    const skip = (page - 1) * pageSize;
-    const deals = await prisma.deal.findMany({
-        where: {
-            userId: params.userId,
-            status: params.status,
-            offer: {
-                type: params.offerType,
-                userId: params.warrantHolderId,
-            },
+            client: { select: { id: true, username: true, isBlocked: true, referrer: { select: { id: true, username: true, isBlocked: true } } } },
+            offer: { select: { id: true, type: true, coin: true, status: true, warrantHolder: { select: { id: true, isBlocked: true } } } }
         },
-        skip,
-        take: pageSize,
-        include: {
-            client: { select: { id: true, username: true, isBlocked: true } },
-            offer: { select: { id: true, type: true, coin: true, status: true, userId: true } },
-        },
+        orderBy: { createdAt: 'desc' }
     });
 
-    const total = await prisma.deal.count({
-        where: {
-            userId: params.userId,
-            status: params.status,
-            offer: {
-                type: params.offerType,
-                userId: params.warrantHolderId,
-            },
-        }
-    });
+    const total = await prisma.deal.count({ where });
 
     return { data: deals, total, page, pageSize };
 }
@@ -480,55 +499,70 @@ export async function updateDeal(dealId: number, data: UpdateDealDto = {}) {
     });
 }
 
-export async function getWarrantHolders(role: string, warrantHolderId?: number, page: number = 1, pageSize: number = 10) {
+export async function getWarrantHolders(role: string, id: number | undefined, page: number = 1, pageSize: number = 10, params: SearchFilterParams = {}) {
     const skip = (page - 1) * pageSize;
+    const where: any = {};
+
+    if (params.search) {
+        const search = params.search.toLowerCase();
+        const isNumericSearch = !isNaN(Number(search));
+
+        let possibleIds: number[] = [];
+        if (isNumericSearch) {
+            possibleIds = await prisma.$queryRaw`
+                SELECT id
+                FROM warrant_holders
+                WHERE CAST(id AS TEXT) ILIKE ${`%${search}%`}
+            `.then((results: any[]) => results.map((r: any) => r.id));
+        }
+
+        where.OR = [
+            ...(isNumericSearch && possibleIds.length > 0 ? [{ id: { in: possibleIds } }] : []),
+            { user: { username: { contains: search, mode: 'insensitive' } } },
+            { chatId: { contains: search, mode: 'insensitive' } }
+        ];
+    }
+    if (params.isBlocked !== undefined) where.isBlocked = params.isBlocked;
+
+    if (params.createdAtStart || params.createdAtEnd) {
+        where.createdAt = {};
+        if (params.createdAtStart) {
+            where.createdAt.gte = new Date(params.createdAtStart);
+        }
+        if (params.createdAtEnd) {
+            where.createdAt.lte = new Date(params.createdAtEnd);
+        }
+    }
+
+    if (role !== 'admin' && id) {
+        where.id = id;
+    }
+
     const warrantHolders = await prisma.warrantHolder.findMany({
-        where: role === 'admin' ? {} : { id: warrantHolderId },
+        where,
         skip,
         take: pageSize,
         include: {
-            user: {
-                select: {
-                    id: true,
-                    username: true,
-                    wallets: true,
-                }
-            },
-            offers: {
-                select: {
-                    id: true,
-                    type: true,
-                    coin: true,
-                    status: true,
-                }
-            }
+            user: { select: { id: true, username: true, wallets: true } },
+            offers: { select: { id: true, type: true, coin: true, status: true } }
         }
     });
 
-    const total = await prisma.warrantHolder.count({
-        where: role === 'admin' ? {} : { id: warrantHolderId }
-    });
+    const total = await prisma.warrantHolder.count({ where });
 
-    return {
-        data: await Promise.all(warrantHolders.map(async (holder) => {
-            const wallets = await Promise.all(holder.user.wallets.map(async (wallet) => ({
-                ...wallet,
-                heldAmount: await getHeldAmount(
-                    holder.user.id,
-                    role === 'admin' ? holder.id : undefined,
-                    wallet.coin
-                )
-            })));
-            return {
-                ...holder,
-                username: holder.user.username,
-                wallets,
-            };
-        })),
-        total,
-        page,
-        pageSize
-    };
+    const data = await Promise.all(warrantHolders.map(async (warrantHolder) => {
+        const wallets = await Promise.all(warrantHolder.user.wallets.map(async (wallet) => ({
+            ...wallet,
+            heldAmount: await getHeldAmount(warrantHolder.user.id, warrantHolder.id, wallet.coin)
+        })));
+        return {
+            ...warrantHolder,
+            username: warrantHolder.user.username,
+            wallets,
+        };
+    }));
+
+    return { data, total, page, pageSize };
 }
 
 export async function createWarrantHolder(data: CreateWarrantHolderDto) {
@@ -667,18 +701,51 @@ export async function updateWarrantHolder(id: number, data: UpdateWarrantHolderD
     };
 }
 
-export async function getSupportTickets(page: number = 1, pageSize: number = 10) {
+export async function getSupportTickets(page: number = 1, pageSize: number = 10, params: SearchFilterParams = {}) {
     const skip = (page - 1) * pageSize;
+    const where: any = {};
+
+    if (params.search) {
+        const search = params.search.toLowerCase();
+        const isNumericSearch = !isNaN(Number(search));
+
+        let possibleIds: number[] = [];
+        if (isNumericSearch) {
+            possibleIds = await prisma.$queryRaw`
+                SELECT id
+                FROM support_tickets
+                WHERE CAST(id AS TEXT) ILIKE ${`%${search}%`}
+            `.then((results: any[]) => results.map((r: any) => r.id));
+        }
+
+        where.OR = [
+            ...(isNumericSearch && possibleIds.length > 0 ? [{ id: { in: possibleIds } }] : []),
+            { user: { username: { contains: search, mode: 'insensitive' } } }
+        ];
+    }
+    if (params.status && params.status !== 'all') where.status = params.status;
+
+    if (params.createdAtStart || params.createdAtEnd) {
+        where.createdAt = {};
+        if (params.createdAtStart) {
+            where.createdAt.gte = new Date(params.createdAtStart);
+        }
+        if (params.createdAtEnd) {
+            where.createdAt.lte = new Date(params.createdAtEnd);
+        }
+    }
+
     const tickets = await prisma.supportTicket.findMany({
+        where,
         skip,
         take: pageSize,
         include: {
-            user: {select: {id: true, username: true, isBlocked: true}}
+            user: { select: { id: true, username: true, isBlocked: true } }
         },
-        orderBy: {createdAt: 'desc'}
+        orderBy: { createdAt: 'desc' }
     });
 
-    const total = await prisma.supportTicket.count();
+    const total = await prisma.supportTicket.count({ where });
 
     return { data: tickets, total, page, pageSize };
 }
@@ -702,18 +769,51 @@ export async function updateSupportTicket(id: number, data: UpdateSupportTicketD
     });
 }
 
-export async function getAmlVerifications(page: number = 1, pageSize: number = 10) {
+export async function getAmlVerifications(page: number = 1, pageSize: number = 10, params: SearchFilterParams = {}) {
     const skip = (page - 1) * pageSize;
+    const where: any = {};
+
+    if (params.search) {
+        const search = params.search.toLowerCase();
+        const isNumericSearch = !isNaN(Number(search));
+
+        let possibleIds: number[] = [];
+        if (isNumericSearch) {
+            possibleIds = await prisma.$queryRaw`
+                SELECT id
+                FROM aml_verifications
+                WHERE CAST(id AS TEXT) ILIKE ${`%${search}%`}
+            `.then((results: any[]) => results.map((r: any) => r.id));
+        }
+
+        where.OR = [
+            ...(isNumericSearch && possibleIds.length > 0 ? [{ id: { in: possibleIds } }] : []),
+            { user: { username: { contains: search, mode: 'insensitive' } } }
+        ];
+    }
+    if (params.status && params.status !== 'all') where.status = params.status;
+
+    if (params.createdAtStart || params.createdAtEnd) {
+        where.createdAt = {};
+        if (params.createdAtStart) {
+            where.createdAt.gte = new Date(params.createdAtStart);
+        }
+        if (params.createdAtEnd) {
+            where.createdAt.lte = new Date(params.createdAtEnd);
+        }
+    }
+
     const verifications = await prisma.amlVerification.findMany({
+        where,
         skip,
         take: pageSize,
         include: {
-            user: {select: {id: true, username: true, isBlocked: true}}
+            user: { select: { id: true, username: true, isBlocked: true } }
         },
-        orderBy: {createdAt: 'desc'}
+        orderBy: { createdAt: 'desc' }
     });
 
-    const total = await prisma.amlVerification.count();
+    const total = await prisma.amlVerification.count({ where });
 
     return { data: verifications, total, page, pageSize };
 }

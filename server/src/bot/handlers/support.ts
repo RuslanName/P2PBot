@@ -7,6 +7,15 @@ import { config } from '../../config/env';
 const prisma = new PrismaClient();
 const SUPPORT_CHAT_ID = config.SUPPORT_CHAT_ID;
 
+const categoryTranslations: Record<string, string> = {
+    deals: 'Обмены',
+    wallets: 'Кошельки',
+    referral: 'Реферальная программа',
+    withdraw: 'Вывод средств',
+    aml: 'AML проверка',
+    other: 'Другое',
+};
+
 export function handleSupport(bot: Telegraf<BotContext>) {
     bot.hears('🆘 Техническая поддержка', async (ctx) => {
         if (!ctx.from?.id) return;
@@ -117,7 +126,10 @@ export function handleSupport(bot: Telegraf<BotContext>) {
             }
 
             const amlVerification = await prisma.amlVerification.findFirst({
-                where: { userId: user.id, status: 'open' },
+                where: {
+                    userId: user.id,
+                    status: { in: ['open', 'rejected'] }
+                },
             });
 
             if (!amlVerification) {
@@ -265,6 +277,22 @@ export function handleSupport(bot: Telegraf<BotContext>) {
         await ctx.editMessageText(
             `Выберите обмен\nСтраница ${page + 1} из ${totalPages}`,
             Markup.inlineKeyboard(buttons)
+        );
+    });
+
+    bot.action(/support_wallet_(BTC|LTC|USDT)/, async (ctx) => {
+        if (!ctx.from?.id) return;
+        const userId = ctx.from.id.toString();
+        const walletType = ctx.match[1];
+
+        await setState(userId, {
+            action: 'support_describe_problem',
+            support: { category: 'wallets', subCategory: walletType },
+        });
+
+        await ctx.editMessageText(
+            `Вы выбрали кошелёк ${walletType}. Подробно опишите проблему.`,
+            Markup.inlineKeyboard([[Markup.button.callback('Отменить', 'support_cancel')]])
         );
     });
 
@@ -584,7 +612,10 @@ async function submitSupportTicket(ctx: BotContext, userId: string) {
         return;
     }
 
-    const reason = support.subCategory ? `${support.category}: ${support.subCategory}` : support.category;
+    const categoryTranslated = categoryTranslations[support.category] || support.category;
+    const reason = support.subCategory
+        ? `${categoryTranslated}: ${support.subCategory}`
+        : categoryTranslated;
 
     const ticket = await prisma.supportTicket.create({
         data: {

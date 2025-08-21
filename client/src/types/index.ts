@@ -109,16 +109,6 @@ export interface UsersTableBodyProps {
     setError: Dispatch<SetStateAction<string | null>>;
 }
 
-export interface CreateOfferDto {
-    type: string;
-    coin: string;
-    fiatCurrency: string[];
-    minDealAmount: number;
-    maxDealAmount: number;
-    markupPercent: number;
-    warrantHolderPaymentDetails: string[];
-}
-
 export interface CreateOfferFormProps {
     onSubmit: (newOffer: {
         type: string;
@@ -146,6 +136,11 @@ export interface DealsTableBodyProps {
     onComplete: (id: number) => void;
 }
 
+export interface CreateWarrantHolderFormProps {
+    onSubmit: (input: string) => void;
+    setError: (error: string | null) => void;
+}
+
 export interface WarrantHoldersTableBodyProps {
     warrantHolders: WarrantHolder[];
     role: string;
@@ -165,6 +160,39 @@ export interface AmlVerificationsTableBodyProps {
     statusFilter: string;
     onApprove: (id: number) => void;
     onReject: (id: number) => void;
+}
+
+export interface SearchFilterProps {
+    filterFields: FilterField[];
+    onSearch: (params: SearchFilterParams) => void;
+}
+
+export interface TableWrapperProps<T> {
+    items: T[];
+    fetchItems: (page: number, append?: boolean, query?: Record<string, any>) => Promise<void>;
+    renderTableBody: (items: T[], isMobile: boolean) => ReactNode;
+    loading: boolean;
+    error: string;
+    hasMore: boolean;
+    pageSize?: number;
+    searchParams?: Record<string, any>;
+}
+
+export interface FilterField {
+    field: string;
+    label: string;
+    type: 'select' | 'dateRange' | 'text';
+    options?: { value: string; label: string }[];
+}
+
+export interface SearchFilterParams {
+    search?: string;
+    status?: string;
+    isBlocked?: boolean;
+    type?: string;
+    fiatCurrency?: string;
+    createdAtStart?: string;
+    createdAtEnd?: string;
 }
 
 interface UserShort {

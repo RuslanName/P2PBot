@@ -6,6 +6,7 @@ import {calculateClientTransaction, calculateReferralFee} from '../../utils/calc
 import {sendP2PTransaction} from "../../wallet/transaction";
 import {config} from "../../config/env";
 import {checkAmlLimits} from "../../utils/amlCheck";
+import {getWalletBalance} from "../../wallet/balance";
 
 const prisma = new PrismaClient();
 
@@ -55,40 +56,58 @@ export function handleDeals(bot: Telegraf<BotContext>) {
 
         const pageSize = 5;
         const skip = 0;
+
         const offers = await prisma.offer.findMany({
             where: {
-                coin: coin,
+                coin,
                 type: 'buy',
                 fiatCurrency: { has: user.fiatCurrency },
-                status: 'open'
+                status: 'open',
             },
-            take: pageSize,
-            skip,
-            include: { warrantHolder: { include: { user: true } } }
+            include: {
+                warrantHolder: {
+                    include: {
+                        user: {
+                            include: {
+                                wallets: {
+                                    where: {
+                                        coin,
+                                    },
+                                },
+                            },
+                        },
+                    },
+                },
+            },
         });
 
-        const totalOffers = await prisma.offer.count({
-            where: {
-                coin: coin,
-                type: 'buy',
-                fiatCurrency: { has: user.fiatCurrency },
-                status: 'open'
-            },
-        });
+        const filteredOffers = offers.filter((offer) =>
+            offer.warrantHolder.user.wallets.some((wallet) => wallet.balance >= offer.maxDealAmount)
+        );
 
-        const buttons = offers.map((offer) => [
+        const totalFilteredOffers = filteredOffers.length;
+        const paginatedOffers = filteredOffers.slice(skip, skip + pageSize);
+
+        if (paginatedOffers.length === 0) {
+            await ctx.editMessageText('Нет доступных оферт', Markup.inlineKeyboard([]));
+            return;
+        }
+
+        const buttons = paginatedOffers.map((offer) => [
             Markup.button.callback(
                 `${offer.warrantHolder.user.username || 'Неизвестно'}: ${offer.minDealAmount} - ${offer.maxDealAmount} ${coin}`,
                 `select_buy_${offer.id}`
             ),
         ]);
 
-        if (totalOffers > pageSize) {
+        if (totalFilteredOffers > pageSize) {
             buttons.push([Markup.button.callback('Вперед ▶️', 'next_buy')]);
         }
 
+        buttons.push([Markup.button.callback('Отменить', 'cancel')]);
+
         await ctx.editMessageText(
-            `Выберите подходящую оферту\nСтраница 1 из ${Math.ceil(totalOffers / pageSize)}`,
+            `Выберите подходящую оферту\nСтраница 1 из ${Math.ceil(totalFilteredOffers / pageSize)}`,
             Markup.inlineKeyboard(buttons)
         );
     });
@@ -105,28 +124,32 @@ export function handleDeals(bot: Telegraf<BotContext>) {
 
         const pageSize = 5;
         const skip = 0;
+
         const offers = await prisma.offer.findMany({
             where: {
-                coin: coin,
+                coin,
                 type: 'sell',
                 fiatCurrency: { has: user.fiatCurrency },
-                status: 'open'
+                status: 'open',
             },
-            take: pageSize,
-            skip,
-            include: { warrantHolder: { include: { user: true } } }
-        });
-
-        const totalOffers = await prisma.offer.count({
-            where: {
-                coin: coin,
-                type: 'sell',
-                fiatCurrency: { has: user.fiatCurrency },
-                status: 'open'
+            include: {
+                warrantHolder: {
+                    include: {
+                        user: true,
+                    },
+                },
             },
         });
 
-        const buttons = offers.map((offer) => [
+        const totalOffers = offers.length;
+        const paginatedOffers = offers.slice(skip, skip + pageSize);
+
+        if (paginatedOffers.length === 0) {
+            await ctx.editMessageText('Нет доступных оферт', Markup.inlineKeyboard([]));
+            return;
+        }
+
+        const buttons = paginatedOffers.map((offer) => [
             Markup.button.callback(
                 `${offer.warrantHolder.user.username || 'Неизвестно'}: ${offer.minDealAmount} - ${offer.maxDealAmount} ${coin}`,
                 `select_sell_${offer.id}`
@@ -136,6 +159,8 @@ export function handleDeals(bot: Telegraf<BotContext>) {
         if (totalOffers > pageSize) {
             buttons.push([Markup.button.callback('Вперед ▶️', 'next_sell')]);
         }
+
+        buttons.push([Markup.button.callback('Отменить', 'cancel')]);
 
         await ctx.editMessageText(
             `Выберите подходящую оферту\nСтраница 1 из ${Math.ceil(totalOffers / pageSize)}`,
@@ -156,38 +181,54 @@ export function handleDeals(bot: Telegraf<BotContext>) {
 
         const pageSize = 5;
         const skip = page * pageSize;
+
         const offers = await prisma.offer.findMany({
             where: {
                 coin: state.coin,
                 type: 'buy',
                 fiatCurrency: { has: state.fiatCurrency },
-                status: 'open'
+                status: 'open',
             },
-            take: pageSize,
-            skip,
-            include: { warrantHolder: { include: { user: true } } }
+            include: {
+                warrantHolder: {
+                    include: {
+                        user: {
+                            include: {
+                                wallets: {
+                                    where: {
+                                        coin: state.coin,
+                                    },
+                                },
+                            },
+                        },
+                    },
+                },
+            },
         });
 
-        const totalOffers = await prisma.offer.count({
-            where: {
-                coin: state.coin,
-                type: 'buy',
-                fiatCurrency: { has: state.fiatCurrency },
-                status: 'open'
-            },
-        });
+        const filteredOffers = offers.filter((offer) =>
+            offer.warrantHolder.user.wallets.some((wallet) => wallet.balance >= offer.maxDealAmount)
+        );
 
-        const buttons = offers.map((offer) => [
+        const totalFilteredOffers = filteredOffers.length;
+        const paginatedOffers = filteredOffers.slice(skip, skip + pageSize);
+
+        if (paginatedOffers.length === 0) {
+            await ctx.editMessageText('Нет доступных оферт', Markup.inlineKeyboard([]));
+            return;
+        }
+
+        const buttons = paginatedOffers.map((offer) => [
             Markup.button.callback(
                 `${offer.warrantHolder.user.username || 'Неизвестно'}: ${offer.minDealAmount} - ${offer.maxDealAmount} ${state.coin}`,
                 `select_buy_${offer.id}`
             ),
         ]);
 
-        const totalPages = Math.ceil(totalOffers / pageSize);
+        const totalPages = Math.ceil(totalFilteredOffers / pageSize);
         const currentPage = page;
 
-        if (totalOffers > pageSize) {
+        if (totalFilteredOffers > pageSize) {
             if (currentPage === 0) {
                 buttons.push([Markup.button.callback('Вперед ▶️', 'next_buy')]);
             } else if (currentPage === totalPages - 1) {
@@ -199,6 +240,8 @@ export function handleDeals(bot: Telegraf<BotContext>) {
                 ]);
             }
         }
+
+        buttons.push([Markup.button.callback('Отменить', 'cancel')]);
 
         await ctx.editMessageText(
             `Выберите подходящую оферту\nСтраница ${currentPage + 1} из ${totalPages}`,
@@ -221,23 +264,33 @@ export function handleDeals(bot: Telegraf<BotContext>) {
                 coin: state.coin,
                 type: 'buy',
                 fiatCurrency: { has: state.fiatCurrency },
-                status: 'open'
+                status: 'open',
             },
-            take: pageSize,
-            skip,
-            include: { warrantHolder: { include: { user: true } } }
+            include: {
+                warrantHolder: {
+                    include: {
+                        user: {
+                            include: {
+                                wallets: {
+                                    where: {
+                                        coin: state.coin,
+                                    },
+                                },
+                            },
+                        },
+                    },
+                },
+            },
         });
 
-        const totalOffers = await prisma.offer.count({
-            where: {
-                coin: state.coin,
-                type: 'buy',
-                fiatCurrency: { has: state.fiatCurrency },
-                status: 'open'
-            },
-        });
+        const filteredOffers = offers.filter((offer) =>
+            offer.warrantHolder.user.wallets.some((wallet) => wallet.balance >= offer.maxDealAmount)
+        );
 
-        if (offers.length === 0) {
+        const totalFilteredOffers = filteredOffers.length;
+        const paginatedOffers = filteredOffers.slice(skip, skip + pageSize);
+
+        if (paginatedOffers.length === 0) {
             await setState(userId, { page: page - 1 });
             await ctx.editMessageText('Нет доступных оферт на этой странице', Markup.inlineKeyboard([]));
             return;
@@ -245,16 +298,16 @@ export function handleDeals(bot: Telegraf<BotContext>) {
 
         await setState(userId, { page });
 
-        const buttons = offers.map((offer) => [
+        const buttons = paginatedOffers.map((offer) => [
             Markup.button.callback(
                 `${offer.warrantHolder.user.username || 'Неизвестно'}: ${offer.minDealAmount} - ${offer.maxDealAmount} ${state.coin}`,
                 `select_buy_${offer.id}`
             ),
         ]);
 
-        const totalPages = Math.ceil(totalOffers / pageSize);
+        const totalPages = Math.ceil(totalFilteredOffers / pageSize);
 
-        if (totalOffers > pageSize) {
+        if (totalFilteredOffers > pageSize) {
             if (page === totalPages - 1) {
                 buttons.push([Markup.button.callback('◀️ Назад', 'prev_buy')]);
             } else {
@@ -264,6 +317,8 @@ export function handleDeals(bot: Telegraf<BotContext>) {
                 ]);
             }
         }
+
+        buttons.push([Markup.button.callback('Отменить', 'cancel')]);
 
         await ctx.editMessageText(
             `Выберите подходящую оферту\nСтраница ${page + 1} из ${totalPages}`,
@@ -284,30 +339,34 @@ export function handleDeals(bot: Telegraf<BotContext>) {
 
         const pageSize = 5;
         const skip = page * pageSize;
+
         const offers = await prisma.offer.findMany({
             where: {
                 coin: state.coin,
                 type: 'sell',
                 fiatCurrency: { has: state.fiatCurrency },
-                status: 'open'
+                status: 'open',
             },
-            take: pageSize,
-            skip,
-            include: { warrantHolder: { include: { user: true } } }
-        });
-
-        const totalOffers = await prisma.offer.count({
-            where: {
-                coin: state.coin,
-                type: 'sell',
-                fiatCurrency: { has: state.fiatCurrency },
-                status: 'open'
+            include: {
+                warrantHolder: {
+                    include: {
+                        user: true,
+                    },
+                },
             },
         });
 
-        const buttons = offers.map((offer) => [
+        const totalOffers = offers.length;
+        const paginatedOffers = offers.slice(skip, skip + pageSize);
+
+        if (paginatedOffers.length === 0) {
+            await ctx.editMessageText('Нет доступных оферт', Markup.inlineKeyboard([]));
+            return;
+        }
+
+        const buttons = paginatedOffers.map((offer) => [
             Markup.button.callback(
-                `${offer.warrantHolder.user.username || 'Неизвестно'}: ${offer.minDealAmount} - ${offer.maxDealAmount} ${offer.coin}`,
+                `${offer.warrantHolder.user.username || 'Неизвестно'}: ${offer.minDealAmount} - ${offer.maxDealAmount} ${state.coin}`,
                 `select_sell_${offer.id}`
             ),
         ]);
@@ -327,6 +386,8 @@ export function handleDeals(bot: Telegraf<BotContext>) {
                 ]);
             }
         }
+
+        buttons.push([Markup.button.callback('Отменить', 'cancel')]);
 
         await ctx.editMessageText(
             `Выберите подходящую оферту\nСтраница ${currentPage + 1} из ${totalPages}`,
@@ -349,23 +410,21 @@ export function handleDeals(bot: Telegraf<BotContext>) {
                 coin: state.coin,
                 type: 'sell',
                 fiatCurrency: { has: state.fiatCurrency },
-                status: 'open'
+                status: 'open',
             },
-            take: pageSize,
-            skip,
-            include: { warrantHolder: { include: { user: true } } }
-        });
-
-        const totalOffers = await prisma.offer.count({
-            where: {
-                coin: state.coin,
-                type: 'sell',
-                fiatCurrency: { has: state.fiatCurrency },
-                status: 'open'
+            include: {
+                warrantHolder: {
+                    include: {
+                        user: true,
+                    },
+                },
             },
         });
 
-        if (offers.length === 0) {
+        const totalOffers = offers.length;
+        const paginatedOffers = offers.slice(skip, skip + pageSize);
+
+        if (paginatedOffers.length === 0) {
             await setState(userId, { page: page - 1 });
             await ctx.editMessageText('Нет доступных оферт на этой странице', Markup.inlineKeyboard([]));
             return;
@@ -373,9 +432,9 @@ export function handleDeals(bot: Telegraf<BotContext>) {
 
         await setState(userId, { page });
 
-        const buttons = offers.map((offer) => [
+        const buttons = paginatedOffers.map((offer) => [
             Markup.button.callback(
-                `${offer.warrantHolder.user.username || 'Неизвестно'}: ${offer.minDealAmount} - ${offer.maxDealAmount} ${offer.coin}`,
+                `${offer.warrantHolder.user.username || 'Неизвестно'}: ${offer.minDealAmount} - ${offer.maxDealAmount} ${state.coin}`,
                 `select_sell_${offer.id}`
             ),
         ]);
@@ -392,6 +451,8 @@ export function handleDeals(bot: Telegraf<BotContext>) {
                 ]);
             }
         }
+
+        buttons.push([Markup.button.callback('Отменить', 'cancel')]);
 
         await ctx.editMessageText(
             `Выберите подходящую оферту\nСтраница ${page + 1} из ${totalPages}`,
@@ -424,8 +485,17 @@ export function handleDeals(bot: Telegraf<BotContext>) {
         const state = await getState(userId);
         if (!state.coin || !state.fiatCurrency) return;
 
-        const offer = await prisma.offer.findUnique({ where: { id: offerId } });
+        const offer = await prisma.offer.findUnique({
+            where: { id: offerId },
+            include: { warrantHolder: { include: { user: true } } }
+        });
         if (!offer) return;
+
+        const userBalance = await getWalletBalance(ctx.from.id, state.coin, false);
+        if (userBalance.confirmed < offer.minDealAmount) {
+            await ctx.editMessageText('Ваш баланс слишком мал для совершения обмена', Markup.inlineKeyboard([]));
+            return;
+        }
 
         await setState(userId, { offerId, action: 'sell_amount' });
 
@@ -477,6 +547,13 @@ export function handleDeals(bot: Telegraf<BotContext>) {
         });
         if (!offer || !state.fiatCurrency) return;
 
+        const balance = await getWalletBalance(offer.warrantHolder.user.id, offer.coin, true);
+        const totalAmount = await calculateClientTransaction('buy', state.coin, state.fiatCurrency, state.amount, offer.markupPercent);
+        if (balance.confirmed < totalAmount) {
+            await ctx.reply('Обмен не был создан. Баланс ордеродержателя меньше необходимого');
+            return;
+        }
+
         const deal = await prisma.deal.create({
             data: {
                 client: { connect: { id: offer.warrantHolder.user.id } },
@@ -488,8 +565,6 @@ export function handleDeals(bot: Telegraf<BotContext>) {
         });
 
         await setState(ctx.from.id.toString(), { dealId: deal.id });
-
-        const totalAmount = await calculateClientTransaction('buy', state.coin, state.fiatCurrency, state.amount, offer.markupPercent);
 
         const index = offer.fiatCurrency.indexOf(deal.fiatCurrency);
 
@@ -839,7 +914,6 @@ export async function handleDealsText(ctx: BotContext) {
     } else if (state.action === 'sell_payment_details') {
         if (!('text' in ctx.message)) return;
         const paymentDetails = ctx.message.text.trim();
-
         const offer = await prisma.offer.findUnique({
             where: { id: state.offerId },
             include: { warrantHolder: { include: { user: true } } }
@@ -872,6 +946,12 @@ export async function handleDealsText(ctx: BotContext) {
             where: { chatId: userId }
         });
         if (!client) return;
+
+        const balance = await getWalletBalance(client.id, offer.coin, true);
+        if (balance.confirmed < state.amount) {
+            await ctx.reply('Обмен не был создан. Ваш баланс меньше необходимого');
+            return;
+        }
 
         const deal = await prisma.deal.create({
             data: {
@@ -908,7 +988,6 @@ export async function handleDealsText(ctx: BotContext) {
     } else if (state.action === 'buy_wallet_address') {
         if (!('text' in ctx.message)) return;
         const walletAddress = ctx.message.text.trim();
-
         const offer = await prisma.offer.findUnique({
             where: { id: state.offerId },
             include: { warrantHolder: { include: { user: true } } }
@@ -937,6 +1016,13 @@ export async function handleDealsText(ctx: BotContext) {
             return;
         }
 
+        const balance = await getWalletBalance(offer.warrantHolder.user.id, offer.coin, true);
+        const totalAmount = await calculateClientTransaction('buy', state.coin, state.fiatCurrency, state.amount, offer.markupPercent);
+        if (balance.confirmed < totalAmount) {
+            await ctx.reply('Обмен не был создан. Баланс ордеродержателя меньше необходимого');
+            return;
+        }
+
         await setState(userId, { paymentDetails: walletAddress });
 
         const deal = await prisma.deal.create({
@@ -951,8 +1037,6 @@ export async function handleDealsText(ctx: BotContext) {
         });
 
         await setState(userId, { dealId: deal.id });
-
-        const totalAmount = await calculateClientTransaction('buy', state.coin, state.fiatCurrency, state.amount, offer.markupPercent);
 
         const index = offer.fiatCurrency.indexOf(deal.fiatCurrency);
 
